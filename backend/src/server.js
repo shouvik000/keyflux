@@ -27,7 +27,10 @@ async function startServer() {
       );
     });
   } catch (error) {
-    console.error("Failed to start KeyFlux API:", error.message);
+   console.error("Failed to start KeyFlux API.");
+   console.error("Error type:", typeof error);
+   console.error("Error details:", error);
+   console.error("Error stack:", error?.stack);
 
     await pool.end().catch(() => {});
 

@@ -35,3 +35,5 @@ Thumbs.db
 *.db
 tmp/
 temp/
+# Temporary local API key test
+.endpoint-test-key

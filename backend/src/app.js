@@ -6,6 +6,7 @@ import helmet from "helmet";
 import pool from "./config/database.js";
 import redisClient from "./config/redis.js";
 import { apiKeyAuth } from "./middleware/apiKeyAuth.js";
+import { apiRateLimit } from "./middleware/apiRateLimit.js";
 
 const app = express();
 
@@ -21,7 +22,7 @@ app.use(
 
 app.use(express.json({ limit: "100kb" }));
 
-// Public home route
+// Welcome endpoint
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
@@ -30,7 +31,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// Public health check
+// Basic health check
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     success: true,
@@ -40,7 +41,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// PostgreSQL and Redis health check
+// PostgreSQL and Redis integration health check
 app.get("/api/health/integrations", async (req, res) => {
   const results = {
     postgres: "unknown",
@@ -79,15 +80,19 @@ app.get("/api/health/integrations", async (req, res) => {
   });
 });
 
-// Protected endpoint: requires a valid API key
-app.get("/api/v1/protected", apiKeyAuth, (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "API key authenticated successfully.",
-    projectId: req.apiKey.projectId,
-    apiKeyId: req.apiKey.id
-  });
-});
+// Protected endpoint: authenticate first, then enforce rate limits.
+app.get(
+  "/api/v1/protected",
+  apiKeyAuth,
+  apiRateLimit,
+  (req, res) => {
+    res.status(200).json({
+      success: true,
+      message: "API key authenticated successfully.",
+      projectId: req.apiKey.projectId,
+      apiKeyId: req.apiKey.id
+    });
+  }
+);
 
 export default app;
-
