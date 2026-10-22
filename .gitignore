@@ -37,3 +37,6 @@ tmp/
 temp/
 # Temporary local API key test
 .endpoint-test-key
+
+# Local API key secrets
+backend/.local-api-key

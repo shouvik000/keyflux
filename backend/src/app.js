@@ -7,6 +7,7 @@ import pool from "./config/database.js";
 import redisClient from "./config/redis.js";
 import { apiKeyAuth } from "./middleware/apiKeyAuth.js";
 import { apiRateLimit } from "./middleware/apiRateLimit.js";
+import usageLogger from "./middleware/usageLogger.js";
 
 const app = express();
 
@@ -84,6 +85,7 @@ app.get("/api/health/integrations", async (req, res) => {
 app.get(
   "/api/v1/protected",
   apiKeyAuth,
+  usageLogger,
   apiRateLimit,
   (req, res) => {
     res.status(200).json({
