@@ -8,6 +8,7 @@ import redisClient from "./config/redis.js";
 import { apiKeyAuth } from "./middleware/apiKeyAuth.js";
 import { apiRateLimit } from "./middleware/apiRateLimit.js";
 import usageLogger from "./middleware/usageLogger.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 
 const app = express();
 
@@ -22,6 +23,9 @@ app.use(
 );
 
 app.use(express.json({ limit: "100kb" }));
+
+// API analytics routes
+app.use("/api/v1/analytics", analyticsRoutes);
 
 // Welcome endpoint
 app.get("/", (req, res) => {
