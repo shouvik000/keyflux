@@ -9,6 +9,7 @@ import { apiKeyAuth } from "./middleware/apiKeyAuth.js";
 import { apiRateLimit } from "./middleware/apiRateLimit.js";
 import usageLogger from "./middleware/usageLogger.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
+import apiKeyRoutes from "./routes/apiKeyRoutes.js";
 
 const app = express();
 
@@ -23,6 +24,9 @@ app.use(
 );
 
 app.use(express.json({ limit: "100kb" }));
+
+// API key management routes
+app.use("/api/v1/keys", apiKeyRoutes);
 
 // API analytics routes
 app.use("/api/v1/analytics", analyticsRoutes);
