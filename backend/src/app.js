@@ -10,6 +10,8 @@ import { apiRateLimit } from "./middleware/apiRateLimit.js";
 import usageLogger from "./middleware/usageLogger.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
 import apiKeyRoutes from "./routes/apiKeyRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import projectRoutes from "./routes/projectRoutes.js";
 
 const app = express();
 
@@ -25,11 +27,16 @@ app.use(
 
 app.use(express.json({ limit: "100kb" }));
 
+// User authentication routes
+app.use("/api/v1/auth", authRoutes);
+
 // API key management routes
 app.use("/api/v1/keys", apiKeyRoutes);
 
 // API analytics routes
 app.use("/api/v1/analytics", analyticsRoutes);
+
+app.use("/api/v1/projects", projectRoutes);
 
 // Welcome endpoint
 app.get("/", (req, res) => {
