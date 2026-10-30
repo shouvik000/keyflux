@@ -40,3 +40,6 @@ temp/
 
 # Local API key secrets
 backend/.local-api-key
+backend/.analytics-test-key
+backend/generate-analytics-key.js
+backend/revoke-exposed-key.js

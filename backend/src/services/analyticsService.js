@@ -115,3 +115,56 @@ export async function getAnalyticsTimeline(projectId, days) {
 
   return result.rows;
 }
+
+
+
+export async function getAnalyticsLogs(
+  projectId,
+  { days, page, limit, method, statusCode }
+) {
+  const offset = (page - 1) * limit;
+
+  const filters = [projectId, days, method, statusCode];
+
+  const whereClause = `
+    WHERE project_id = $1
+      AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+      AND ($3::text IS NULL OR http_method = $3)
+      AND ($4::int IS NULL OR status_code = $4)
+  `;
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total
+     FROM api_usage_logs
+     ${whereClause}`,
+    filters
+  );
+
+  const logsResult = await pool.query(
+    `SELECT
+       request_path,
+       http_method,
+       status_code,
+       response_time_ms,
+       created_at
+     FROM api_usage_logs
+     ${whereClause}
+     ORDER BY created_at DESC
+     LIMIT $5 OFFSET $6`,
+    [...filters, limit, offset]
+  );
+
+  const total = countResult.rows[0].total;
+
+  return {
+    logs: logsResult.rows,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      hasNextPage: page * limit < total,
+      hasPreviousPage: page > 1
+    }
+  };
+}
