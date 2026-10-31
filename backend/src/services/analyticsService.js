@@ -1,6 +1,7 @@
 
 import pool from "../config/database.js";
 
+
 export async function getAnalyticsOverview(projectId, days) {
   const result = await pool.query(
     `SELECT
@@ -25,7 +26,18 @@ export async function getAnalyticsOverview(projectId, days) {
        COALESCE(
          ROUND(AVG(response_time_ms)::numeric, 2),
          0
-       ) AS average_response_time_ms
+       ) AS average_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           (
+             COUNT(*) FILTER (WHERE status_code >= 400)::numeric
+             / NULLIF(COUNT(*), 0)
+           ) * 100,
+           2
+         ),
+         0
+       ) AS error_rate_percentage
 
      FROM api_usage_logs
      WHERE project_id = $1
@@ -33,8 +45,32 @@ export async function getAnalyticsOverview(projectId, days) {
     [projectId, days]
   );
 
-  return result.rows[0];
+  const methodResult = await pool.query(
+    `SELECT
+       http_method,
+       COUNT(*)::int AS total_requests
+
+     FROM api_usage_logs
+     WHERE project_id = $1
+       AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+
+     GROUP BY http_method
+     ORDER BY total_requests DESC, http_method ASC`,
+    [projectId, days]
+  );
+
+  return {
+    ...result.rows[0],
+    average_response_time_ms: Number(
+      result.rows[0].average_response_time_ms
+    ),
+    error_rate_percentage: Number(
+      result.rows[0].error_rate_percentage
+    ),
+    requests_by_method: methodResult.rows
+  };
 }
+
 
 export async function getAnalyticsEndpoints(projectId, days) {
   const result = await pool.query(
