@@ -12,6 +12,154 @@ import {
 
 const router = Router();
 
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     CreateApiKeyRequest:
+ *       type: object
+ *       required:
+ *         - name
+ *       properties:
+ *         name:
+ *           type: string
+ *           maxLength: 100
+ *           example: Production API Key
+ *         expiresAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *           example: "2027-12-31T23:59:59.000Z"
+ *     ApiKey:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *           example: 12
+ *         project_id:
+ *           type: integer
+ *           example: 3
+ *         name:
+ *           type: string
+ *           example: Production API Key
+ *         key_prefix:
+ *           type: string
+ *           example: kf_live_abcd
+ *         last_used_at:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         expires_at:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         revoked_at:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         created_at:
+ *           type: string
+ *           format: date-time
+ *     ApiKeyError:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: false
+ *         error:
+ *           type: object
+ *           properties:
+ *             code:
+ *               type: string
+ *               example: API_KEY_INVALID
+ *             message:
+ *               type: string
+ *               example: The API key is invalid.
+ */
+
+/**
+ * @swagger
+ * /api/v1/keys:
+ *   get:
+ *     summary: List API keys
+ *     description: Returns API keys belonging to the project associated with the supplied API key.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: API keys retrieved successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/ApiKey'
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiKeyError'
+ *       500:
+ *         description: Internal server error.
+ *
+ *   post:
+ *     summary: Create an API key
+ *     description: Creates a new API key for the authenticated project. The full key is returned only once.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateApiKeyRequest'
+ *     responses:
+ *       201:
+ *         description: API key created successfully. Save the full key because it will not be shown again.
+ *       400:
+ *         description: Invalid API key input.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       500:
+ *         description: Internal server error.
+ *
+ * /api/v1/keys/{id}:
+ *   delete:
+ *     summary: Revoke an API key
+ *     description: Revokes an API key belonging to the authenticated project. An already revoked or unknown key returns 404.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: ID of the API key to revoke.
+ *     responses:
+ *       200:
+ *         description: API key revoked successfully.
+ *       400:
+ *         description: Invalid API key ID.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       404:
+ *         description: API key not found or already revoked.
+ *       500:
+ *         description: Internal server error.
+ */
+
 // Authenticate requests and apply the existing middleware.
 router.use(apiKeyAuth, usageLogger, apiRateLimit);
 
