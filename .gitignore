@@ -43,3 +43,4 @@ backend/.local-api-key
 backend/.analytics-test-key
 backend/generate-analytics-key.js
 backend/revoke-exposed-key.js
+backend/.cross-project-test-key

@@ -113,3 +113,108 @@ export async function revokeApiKey({ projectId, apiKeyId }) {
 
   return result.rows[0] ?? null;
 }
+
+export async function getApiKeyUsage({
+  projectId,
+  apiKeyId,
+  days = 7
+}) {
+  const validProjectId = validateId(projectId, "projectId");
+  const validApiKeyId = validateId(apiKeyId, "apiKeyId");
+
+  if (![7, 30, 90].includes(Number(days))) {
+    throw new TypeError("days must be 7, 30, or 90.");
+  }
+
+  const validDays = Number(days);
+
+  // Calculate statistics for this API key only.
+  // The project condition prevents cross-project data access.
+  const summaryResult = await pool.query(
+    `SELECT
+       COUNT(l.id)::int AS total_requests,
+
+       COUNT(l.id) FILTER (
+         WHERE l.status_code >= 200 AND l.status_code < 300
+       )::int AS successful_requests,
+
+       COUNT(l.id) FILTER (
+         WHERE l.status_code >= 400 AND l.status_code < 500
+       )::int AS client_errors,
+
+       COUNT(l.id) FILTER (
+         WHERE l.status_code >= 500 AND l.status_code < 600
+       )::int AS server_errors,
+
+       COUNT(l.id) FILTER (
+         WHERE l.status_code >= 400
+       )::int AS failed_requests,
+
+       COALESCE(
+         ROUND(AVG(l.response_time_ms)::numeric, 2),
+         0
+       ) AS average_response_time_ms
+
+     FROM api_keys k
+
+     LEFT JOIN api_usage_logs l
+       ON l.api_key_id = k.id
+       AND l.project_id = k.project_id
+       AND l.created_at >= NOW() - ($3::int * INTERVAL '1 day')
+
+     WHERE k.id = $1
+       AND k.project_id = $2
+
+     GROUP BY k.id`,
+    [validApiKeyId, validProjectId, validDays]
+  );
+
+  // Return null if the key does not belong to this project.
+  if (summaryResult.rows.length === 0) {
+    return null;
+  }
+
+  // Calculate daily usage for the selected API key.
+  const timelineResult = await pool.query(
+    `SELECT
+       TO_CHAR(
+         DATE_TRUNC('day', created_at),
+         'YYYY-MM-DD'
+       ) AS date,
+
+       COUNT(*)::int AS total_requests,
+
+       COUNT(*) FILTER (
+         WHERE status_code >= 200 AND status_code < 300
+       )::int AS successful_requests,
+
+       COUNT(*) FILTER (
+         WHERE status_code >= 400 AND status_code < 500
+       )::int AS client_errors,
+
+       COUNT(*) FILTER (
+         WHERE status_code >= 500 AND status_code < 600
+       )::int AS server_errors
+
+     FROM api_usage_logs
+
+     WHERE api_key_id = $1
+       AND project_id = $2
+       AND created_at >= NOW() - ($3::int * INTERVAL '1 day')
+
+     GROUP BY DATE_TRUNC('day', created_at)
+
+     ORDER BY DATE_TRUNC('day', created_at) ASC`,
+    [validApiKeyId, validProjectId, validDays]
+  );
+
+  const summary = summaryResult.rows[0];
+
+  return {
+    ...summary,
+    average_response_time_ms: Number(
+      summary.average_response_time_ms
+    ),
+    timeline: timelineResult.rows
+  };
+}

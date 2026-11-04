@@ -1,4 +1,4 @@
-
+﻿
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -218,6 +218,94 @@ describe("API Key Management API", () => {
         );
 
         assert.equal(result.rows[0].last_used_at, null);
+    });
+
+
+
+
+    it("should return usage statistics for an API key", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Usage Statistics Test"
+        });
+
+        // Generate a successful request using the target key.
+        const protectedResponse = await request(app)
+            .get("/api/v1/protected")
+            .set("x-api-key", targetKey.key);
+
+        assert.equal(protectedResponse.status, 200);
+
+        // Retrieve usage statistics using the bootstrap key.
+        const response = await request(app)
+            .get(`/api/v1/keys/${targetKey.apiKey.id}/usage?days=7`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const data = response.body.data;
+
+        assert.ok(data.total_requests >= 1);
+        assert.ok(data.successful_requests >= 1);
+        assert.equal(typeof data.client_errors, "number");
+        assert.equal(typeof data.server_errors, "number");
+        assert.equal(typeof data.failed_requests, "number");
+        assert.equal(typeof data.average_response_time_ms, "number");
+        assert.ok(Array.isArray(data.timeline));
+    });
+
+    it("should reject invalid usage statistics day ranges", async () => {
+        const response = await request(app)
+            .get(`/api/v1/keys/${createdKeyId}/usage?days=14`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(response.body.error.code, "INVALID_DAYS");
+    });
+
+    it("should return 404 for a nonexistent API key usage request", async () => {
+        const response = await request(app)
+            .get("/api/v1/keys/999999/usage")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
+
+    it("should prevent access to usage statistics from another project", async () => {
+        // Create another project belonging to the test user.
+        const projectResponse = await request(app)
+            .post("/api/v1/projects")
+            .set("Authorization", `Bearer ${token}`)
+            .send({
+                name: "API Key Isolation Test Project",
+                description: "Temporary project for usage isolation testing."
+            });
+
+        assert.equal(projectResponse.status, 201);
+
+        const otherProjectId = projectResponse.body.data.project.id;
+
+        // Generate an API key belonging to the other project.
+        const otherProjectKey = await createApiKey({
+            projectId: otherProjectId,
+            name: "Other Project Test Key"
+        });
+
+        // Attempt to access a key belonging to the original project.
+        const response = await request(app)
+            .get(`/api/v1/keys/${createdKeyId}/usage?days=7`)
+            .set("x-api-key", otherProjectKey.key);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
     });
 
 

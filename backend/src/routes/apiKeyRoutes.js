@@ -1,5 +1,6 @@
 
 import { Router } from "express";
+
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
 import { apiRateLimit } from "../middleware/apiRateLimit.js";
 import usageLogger from "../middleware/usageLogger.js";
@@ -7,10 +8,49 @@ import usageLogger from "../middleware/usageLogger.js";
 import {
   createApiKey,
   listApiKeys,
-  revokeApiKey
+  revokeApiKey,
+  getApiKeyUsage
 } from "../services/apiKeyService.js";
 
 const router = Router();
+
+/**
+ * @swagger
+ * /api/v1/keys/{id}/usage:
+ *   get:
+ *     summary: Get API key usage statistics
+ *     description: Returns usage statistics for a specific API key belonging to the authenticated project.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: ID of the API key.
+ *       - in: query
+ *         name: days
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           enum: [7, 30, 90]
+ *           default: 7
+ *         description: Number of days of usage history.
+ *     responses:
+ *       200:
+ *         description: API key usage statistics retrieved successfully.
+ *       400:
+ *         description: Invalid API key ID or days parameter.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       404:
+ *         description: API key not found in the authenticated project.
+ *       500:
+ *         description: Internal server error.
+ */
 
 /**
  * @swagger
@@ -30,6 +70,7 @@ const router = Router();
  *           format: date-time
  *           nullable: true
  *           example: "2027-12-31T23:59:59.000Z"
+ *
  *     ApiKey:
  *       type: object
  *       properties:
@@ -60,6 +101,7 @@ const router = Router();
  *         created_at:
  *           type: string
  *           format: date-time
+ *
  *     ApiKeyError:
  *       type: object
  *       properties:
@@ -210,6 +252,57 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+// GET /api/v1/keys/:id/usage
+// Get usage statistics for a specific API key.
+router.get("/:id/usage", async (req, res, next) => {
+  try {
+    const { days = "7" } = req.query;
+
+    if (!["7", "30", "90"].includes(String(days))) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_DAYS",
+          message: "days must be 7, 30, or 90."
+        }
+      });
+    }
+
+    const data = await getApiKeyUsage({
+      projectId: req.apiKey.projectId,
+      apiKeyId: req.params.id,
+      days: Number(days)
+    });
+
+   if (!data) {
+  return res.status(404).json({
+    success: false,
+    error: {
+      code: "API_KEY_NOT_FOUND",
+      message: "The API key was not found in the authenticated project."
+    }
+  });
+}
+
+    res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_API_KEY_ID",
+          message: error.message
+        }
+      });
+    }
+
+    next(error);
+  }
+});
+
 // DELETE /api/v1/keys/:id
 // Revoke a key only if it belongs to the authenticated project.
 router.delete("/:id", async (req, res, next) => {
@@ -250,3 +343,4 @@ router.delete("/:id", async (req, res, next) => {
 });
 
 export default router;
+
