@@ -1,4 +1,4 @@
-﻿
+
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -148,6 +148,79 @@ describe("API Key Management API", () => {
         assert.equal(createdKey.key_hash, undefined);
     });
 
+
+    it("should update last_used_at after successful API key authentication", async () => {
+        const created = await createApiKey({
+            projectId,
+            name: "Last Used Tracking Test"
+        });
+
+        const apiKeyId = created.apiKey.id;
+
+        // Initially, the key should not have been used.
+        const before = await pool.query(
+            "SELECT last_used_at FROM api_keys WHERE id = $1",
+            [apiKeyId]
+        );
+
+        assert.equal(before.rows[0].last_used_at, null);
+
+        // Authenticate using the newly created key.
+        const response = await request(app)
+            .get("/api/v1/protected")
+            .set("x-api-key", created.key);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        // Verify that last_used_at was updated.
+        const after = await pool.query(
+            "SELECT last_used_at FROM api_keys WHERE id = $1",
+            [apiKeyId]
+        );
+
+        assert.ok(after.rows[0].last_used_at);
+        assert.ok(
+            new Date(after.rows[0].last_used_at).getTime() > 0
+        );
+    });
+
+    it("should reject expired API keys without updating last_used_at", async () => {
+        const created = await createApiKey({
+            projectId,
+            name: "Expired API Key Test"
+        });
+
+        const apiKeyId = created.apiKey.id;
+
+        // Manually expire the key for testing.
+        await pool.query(
+            `UPDATE api_keys
+             SET expires_at = NOW() - INTERVAL '1 minute'
+             WHERE id = $1`,
+            [apiKeyId]
+        );
+
+        const response = await request(app)
+            .get("/api/v1/protected")
+            .set("x-api-key", created.key);
+
+        assert.equal(response.status, 401);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_EXPIRED"
+        );
+
+        // Failed authentication must not update last_used_at.
+        const result = await pool.query(
+            "SELECT last_used_at FROM api_keys WHERE id = $1",
+            [apiKeyId]
+        );
+
+        assert.equal(result.rows[0].last_used_at, null);
+    });
+
+
     it("should revoke an API key", async () => {
         const response = await request(app)
             .delete(`/api/v1/keys/${createdKeyId}`)
@@ -183,4 +256,3 @@ describe("API Key Management API", () => {
         );
     });
 });
-

@@ -28,17 +28,63 @@ export async function apiKeyAuth(req, res, next) {
 
     const keyHash = hashApiKey(apiKey);
 
+    // Atomically validate the key and update its last-used timestamp.
     const result = await pool.query(
-      `SELECT id, project_id, expires_at, revoked_at
-       FROM api_keys
+      `UPDATE api_keys
+       SET last_used_at = NOW()
        WHERE key_hash = $1
-       LIMIT 1`,
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())
+       RETURNING id, project_id`,
       [keyHash]
     );
 
     const key = result.rows[0];
 
+    // No active key was updated. Determine why authentication failed.
     if (!key) {
+      const statusResult = await pool.query(
+        `SELECT
+           revoked_at IS NOT NULL AS is_revoked,
+           expires_at IS NOT NULL AND expires_at <= NOW() AS is_expired
+         FROM api_keys
+         WHERE key_hash = $1
+         LIMIT 1`,
+        [keyHash]
+      );
+
+      const status = statusResult.rows[0];
+
+      if (!status) {
+        return res.status(401).json({
+          success: false,
+          error: {
+            code: "API_KEY_INVALID",
+            message: "The API key is invalid."
+          }
+        });
+      }
+
+      if (status.is_revoked) {
+        return res.status(401).json({
+          success: false,
+          error: {
+            code: "API_KEY_REVOKED",
+            message: "This API key has been revoked."
+          }
+        });
+      }
+
+      if (status.is_expired) {
+        return res.status(401).json({
+          success: false,
+          error: {
+            code: "API_KEY_EXPIRED",
+            message: "This API key has expired."
+          }
+        });
+      }
+
       return res.status(401).json({
         success: false,
         error: {
@@ -47,36 +93,6 @@ export async function apiKeyAuth(req, res, next) {
         }
       });
     }
-
-    if (key.revoked_at) {
-      return res.status(401).json({
-        success: false,
-        error: {
-          code: "API_KEY_REVOKED",
-          message: "This API key has been revoked."
-        }
-      });
-    }
-
-    if (
-      key.expires_at &&
-      new Date(key.expires_at).getTime() <= Date.now()
-    ) {
-      return res.status(401).json({
-        success: false,
-        error: {
-          code: "API_KEY_EXPIRED",
-          message: "This API key has expired."
-        }
-      });
-    }
-
-    await pool.query(
-      `UPDATE api_keys
-       SET last_used_at = NOW()
-       WHERE id = $1`,
-      [key.id]
-    );
 
     req.apiKey = {
       id: key.id,
@@ -96,4 +112,3 @@ export async function apiKeyAuth(req, res, next) {
     });
   }
 }
-
