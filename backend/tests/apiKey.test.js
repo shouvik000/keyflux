@@ -320,6 +320,129 @@ describe("API Key Management API", () => {
         assert.ok(response.body.data.revoked_at);
     });
 
+        it("should successfully rotate an API key", async () => {
+        const oldKey = await createApiKey({
+            projectId,
+            name: "Rotation Success Test"
+        });
+
+        const response = await request(app)
+            .post(`/api/v1/keys/${oldKey.apiKey.id}/rotate`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const newKey = response.body.data.key;
+        const newKeyId = response.body.data.apiKey.id;
+
+        assert.ok(newKey.startsWith("kf_live_"));
+        assert.ok(newKeyId);
+        assert.equal(
+            response.body.data.apiKey.name,
+            "Rotation Success Test"
+        );
+
+        // Verify the old key has been revoked.
+        const oldKeyResult = await pool.query(
+            "SELECT revoked_at FROM api_keys WHERE id = $1",
+            [oldKey.apiKey.id]
+        );
+
+        assert.ok(oldKeyResult.rows[0].revoked_at);
+
+        // Verify the new key works.
+        const newKeyResponse = await request(app)
+            .get("/api/v1/protected")
+            .set("x-api-key", newKey);
+
+        assert.equal(newKeyResponse.status, 200);
+
+        // Verify the old key no longer works.
+        const oldKeyResponse = await request(app)
+            .get("/api/v1/protected")
+            .set("x-api-key", oldKey.key);
+
+        assert.equal(oldKeyResponse.status, 401);
+        assert.equal(
+            oldKeyResponse.body.error.code,
+            "API_KEY_REVOKED"
+        );
+    });
+
+    it("should reject rotation with an invalid API key ID", async () => {
+        const response = await request(app)
+            .post("/api/v1/keys/invalid/rotate")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_API_KEY_ID"
+        );
+    });
+
+    it("should return 404 when rotating an already revoked API key", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Already Revoked Rotation Test"
+        });
+
+        // Revoke the key first.
+        const revokeResponse = await request(app)
+            .delete(`/api/v1/keys/${targetKey.apiKey.id}`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(revokeResponse.status, 200);
+
+        // Attempt to rotate the revoked key.
+        const response = await request(app)
+            .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
+
+    it("should prevent rotating an API key belonging to another project", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Project Isolation Rotation Test"
+        });
+
+        // Create another project.
+        const projectResponse = await request(app)
+            .post("/api/v1/projects")
+            .set("Authorization", `Bearer ${token}`)
+            .send({
+                name: "Rotation Isolation Test Project",
+                description: "Temporary project for rotation isolation testing."
+            });
+
+        assert.equal(projectResponse.status, 201);
+
+        const otherProjectId =
+            projectResponse.body.data.project.id;
+
+        const otherProjectKey = await createApiKey({
+            projectId: otherProjectId,
+            name: "Other Project Rotation Key"
+        });
+
+        // Authenticate with another project's key.
+        const response = await request(app)
+            .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
+            .set("x-api-key", otherProjectKey.key);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
     it("should reject authentication using a revoked API key", async () => {
         const response = await request(app)
             .get("/api/v1/protected")

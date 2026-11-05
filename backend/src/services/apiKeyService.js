@@ -218,3 +218,90 @@ export async function getApiKeyUsage({
     timeline: timelineResult.rows
   };
 }
+
+
+export async function rotateApiKey({ projectId, apiKeyId }) {
+  const validProjectId = validateId(projectId, "projectId");
+  const validApiKeyId = validateId(apiKeyId, "apiKeyId");
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Lock the existing key so simultaneous rotation requests
+    // cannot rotate the same key twice.
+    const oldKeyResult = await client.query(
+      `SELECT id, project_id, name, expires_at, revoked_at
+       FROM api_keys
+       WHERE id = $1
+         AND project_id = $2
+       FOR UPDATE`,
+      [validApiKeyId, validProjectId]
+    );
+
+    const oldKey = oldKeyResult.rows[0];
+
+    // Do not reveal whether a key exists in another project.
+    if (!oldKey || oldKey.revoked_at) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    // An already expired key should not produce another expired key.
+    if (
+      oldKey.expires_at &&
+      new Date(oldKey.expires_at).getTime() <= Date.now()
+    ) {
+      const error = new Error("An expired API key cannot be rotated.");
+      error.code = "API_KEY_EXPIRED";
+      throw error;
+    }
+
+    // Generate a completely new API key.
+    const generated = generateApiKey();
+
+    // Insert the replacement key.
+    const newKeyResult = await client.query(
+      `INSERT INTO api_keys
+         (project_id, name, key_prefix, key_hash, expires_at)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, project_id, name, key_prefix, expires_at, created_at`,
+      [
+        validProjectId,
+        oldKey.name,
+        generated.keyPrefix,
+        generated.keyHash,
+        oldKey.expires_at
+      ]
+    );
+
+    // Revoke the previous key.
+    const revokedKeyResult = await client.query(
+      `UPDATE api_keys
+       SET revoked_at = NOW()
+       WHERE id = $1
+         AND project_id = $2
+         AND revoked_at IS NULL
+       RETURNING id, project_id, revoked_at`,
+      [validApiKeyId, validProjectId]
+    );
+
+    if (revokedKeyResult.rowCount !== 1) {
+      throw new Error("Failed to revoke the previous API key.");
+    }
+
+    await client.query("COMMIT");
+
+    return {
+      key: generated.fullKey,
+      apiKey: newKeyResult.rows[0],
+      revokedApiKey: revokedKeyResult.rows[0]
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}

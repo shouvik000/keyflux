@@ -9,7 +9,8 @@ import {
   createApiKey,
   listApiKeys,
   revokeApiKey,
-  getApiKeyUsage
+  getApiKeyUsage,
+  rotateApiKey
 } from "../services/apiKeyService.js";
 
 const router = Router();
@@ -200,6 +201,34 @@ const router = Router();
  *         description: API key not found or already revoked.
  *       500:
  *         description: Internal server error.
+ *   /api/v1/keys/{id}/rotate:
+ *   post:
+ *     summary: Rotate an API key
+ *     description: Generates a replacement API key and revokes the existing key. The new plaintext key is returned only once.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: ID of the API key to rotate.
+ *     responses:
+ *       200:
+ *         description: API key rotated successfully. Save the new key securely.
+ *       400:
+ *         description: Invalid API key ID.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       404:
+ *         description: API key not found or already revoked.
+ *       409:
+ *         description: The API key has expired and cannot be rotated.
+ *       500:
+ *         description: Internal server error.
  */
 
 // Authenticate requests and apply the existing middleware.
@@ -304,6 +333,58 @@ router.get("/:id/usage", async (req, res, next) => {
 });
 
 // DELETE /api/v1/keys/:id
+// POST /api/v1/keys/:id/rotate
+// Generate a replacement key and revoke the previous key.
+router.post("/:id/rotate", async (req, res, next) => {
+  try {
+    const result = await rotateApiKey({
+      projectId: req.apiKey.projectId,
+      apiKeyId: req.params.id
+    });
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "API_KEY_NOT_FOUND",
+          message: "The API key was not found or has already been revoked."
+        }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "API key rotated successfully. Save your new key securely.",
+      data: {
+        key: result.key,
+        apiKey: result.apiKey,
+        revokedApiKey: result.revokedApiKey
+      }
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_API_KEY_ID",
+          message: error.message
+        }
+      });
+    }
+
+    if (error.code === "API_KEY_EXPIRED") {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: "API_KEY_EXPIRED",
+          message: error.message
+        }
+      });
+    }
+
+    next(error);
+  }
+});
 // Revoke a key only if it belongs to the authenticated project.
 router.delete("/:id", async (req, res, next) => {
   try {
