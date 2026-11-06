@@ -127,6 +127,64 @@ describe("API Key Management API", () => {
         );
     });
 
+        it("should create an API key with a future expiration date", async () => {
+        const expiresAt = new Date(
+            Date.now() + 7 * 24 * 60 * 60 * 1000
+        ).toISOString();
+
+        const response = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Future Expiration Test",
+                expiresAt
+            });
+
+        assert.equal(response.status, 201);
+        assert.equal(response.body.success, true);
+
+        assert.equal(
+            new Date(response.body.data.apiKey.expires_at).toISOString(),
+            expiresAt
+        );
+    });
+
+    it("should reject an API key with an invalid expiration date", async () => {
+        const response = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Invalid Expiration Test",
+                expiresAt: "not-a-valid-date"
+            });
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_API_KEY_INPUT"
+        );
+    });
+
+    it("should reject an API key with an expiration date in the past", async () => {
+        const expiresAt = new Date(
+            Date.now() - 24 * 60 * 60 * 1000
+        ).toISOString();
+
+        const response = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Past Expiration Test",
+                expiresAt
+            });
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_API_KEY_INPUT"
+        );
+    });
+
     it("should list API keys without exposing their hashes", async () => {
         const response = await request(app)
             .get("/api/v1/keys")
@@ -319,6 +377,66 @@ describe("API Key Management API", () => {
         assert.equal(response.body.data.id, createdKeyId);
         assert.ok(response.body.data.revoked_at);
     });
+
+
+
+    it("should reject rotation of an expired API key", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Expired Rotation Test",
+            expiresAt: new Date(
+                Date.now() + 24 * 60 * 60 * 1000
+            ).toISOString()
+        });
+
+        // Expire the key directly in the database.
+        await pool.query(
+            `UPDATE api_keys
+             SET expires_at = NOW() - INTERVAL '1 minute'
+             WHERE id = $1`,
+            [targetKey.apiKey.id]
+        );
+
+        const response = await request(app)
+            .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 409);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_EXPIRED"
+        );
+    });
+
+    it("should preserve expiration date when rotating an API key", async () => {
+        const expiresAt = new Date(
+            Date.now() + 14 * 24 * 60 * 60 * 1000
+        ).toISOString();
+
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Expiration Preservation Test",
+            expiresAt
+        });
+
+        const response = await request(app)
+            .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const replacementExpiration =
+            response.body.data.apiKey.expires_at;
+
+        assert.ok(replacementExpiration);
+
+        assert.equal(
+            new Date(replacementExpiration).getTime(),
+            new Date(expiresAt).getTime()
+        );
+    });
+
 
         it("should successfully rotate an API key", async () => {
         const oldKey = await createApiKey({
