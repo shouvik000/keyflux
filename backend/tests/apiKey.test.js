@@ -206,6 +206,157 @@ describe("API Key Management API", () => {
         assert.equal(createdKey.key_hash, undefined);
     });
 
+        it("should return only active API keys", async () => {
+        const expired = await createApiKey({
+            projectId,
+            name: "Lifecycle Expired Test"
+        });
+
+        await pool.query(
+            `UPDATE api_keys
+             SET expires_at = NOW() - INTERVAL '1 day'
+             WHERE id = $1`,
+            [expired.apiKey.id]
+        );
+
+        const revoked = await createApiKey({
+            projectId,
+            name: "Lifecycle Revoked Test"
+        });
+
+        await request(app)
+            .delete(`/api/v1/keys/${revoked.apiKey.id}`)
+            .set("x-api-key", bootstrapKey)
+            .expect(200);
+
+        const response = await request(app)
+            .get("/api/v1/keys?status=active")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+
+        for (const key of response.body.data) {
+            assert.equal(key.revoked_at, null);
+
+            assert.ok(
+                key.expires_at === null ||
+                new Date(key.expires_at).getTime() > Date.now()
+            );
+        }
+    });
+
+    it("should return only expired API keys", async () => {
+        const created = await createApiKey({
+            projectId,
+            name: "Lifecycle Expired Filter Test"
+        });
+
+        await pool.query(
+            `UPDATE api_keys
+             SET expires_at = NOW() - INTERVAL '1 day'
+             WHERE id = $1`,
+            [created.apiKey.id]
+        );
+
+        const response = await request(app)
+            .get("/api/v1/keys?status=expired")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+
+        assert.ok(
+            response.body.data.some(
+                (key) => key.id === created.apiKey.id
+            )
+        );
+
+        for (const key of response.body.data) {
+            assert.equal(key.revoked_at, null);
+            assert.ok(new Date(key.expires_at).getTime() <= Date.now());
+        }
+    });
+
+    it("should return only revoked API keys", async () => {
+        const created = await createApiKey({
+            projectId,
+            name: "Lifecycle Revoked Filter Test"
+        });
+
+        await request(app)
+            .delete(`/api/v1/keys/${created.apiKey.id}`)
+            .set("x-api-key", bootstrapKey)
+            .expect(200);
+
+        const response = await request(app)
+            .get("/api/v1/keys?status=revoked")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+
+        assert.ok(
+            response.body.data.some(
+                (key) => key.id === created.apiKey.id
+            )
+        );
+
+        for (const key of response.body.data) {
+            assert.ok(key.revoked_at);
+        }
+    });
+
+    it("should return active API keys expiring within the requested days", async () => {
+        const expiresAt = new Date(
+            Date.now() + 3 * 24 * 60 * 60 * 1000
+        ).toISOString();
+
+        const created = await createApiKey({
+            projectId,
+            name: "Lifecycle Expiring Soon Test",
+            expiresAt
+        });
+
+        const response = await request(app)
+            .get("/api/v1/keys?expiringWithinDays=7")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+
+        assert.ok(
+            response.body.data.some(
+                (key) => key.id === created.apiKey.id
+            )
+        );
+
+        for (const key of response.body.data) {
+            assert.equal(key.revoked_at, null);
+            assert.ok(key.expires_at);
+        }
+    });
+
+    it("should reject an invalid API key status filter", async () => {
+        const response = await request(app)
+            .get("/api/v1/keys?status=invalid")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_API_KEY_STATUS"
+        );
+    });
+
+    it("should reject an invalid expiration window", async () => {
+        const response = await request(app)
+            .get("/api/v1/keys?expiringWithinDays=400")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_EXPIRATION_WINDOW"
+        );
+    });
+
 
     it("should update last_used_at after successful API key authentication", async () => {
         const created = await createApiKey({

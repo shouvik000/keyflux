@@ -75,8 +75,40 @@ export async function createApiKey({
   };
 }
 
-export async function listApiKeys(projectId) {
+export async function listApiKeys({
+  projectId,
+  status = "all",
+  expiringWithinDays = null
+}) {
   const validProjectId = validateId(projectId, "projectId");
+
+  const allowedStatuses = ["all", "active", "expired", "revoked"];
+
+  if (!allowedStatuses.includes(status)) {
+    const error = new TypeError(
+      "status must be one of: all, active, expired, revoked."
+    );
+    error.code = "INVALID_API_KEY_STATUS";
+    throw error;
+  }
+
+  let validExpiringDays = null;
+
+  if (expiringWithinDays !== null && expiringWithinDays !== "") {
+    validExpiringDays = Number(expiringWithinDays);
+
+    if (
+      !Number.isInteger(validExpiringDays) ||
+      validExpiringDays < 1 ||
+      validExpiringDays > 365
+    ) {
+      const error = new TypeError(
+        "expiringWithinDays must be an integer between 1 and 365."
+      );
+      error.code = "INVALID_EXPIRATION_WINDOW";
+      throw error;
+    }
+  }
 
   const result = await pool.query(
     `SELECT
@@ -90,8 +122,33 @@ export async function listApiKeys(projectId) {
        created_at
      FROM api_keys
      WHERE project_id = $1
+       AND (
+         $2 = 'all'
+         OR (
+           $2 = 'active'
+           AND revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > NOW())
+         )
+         OR (
+           $2 = 'expired'
+           AND revoked_at IS NULL
+           AND expires_at <= NOW()
+         )
+         OR (
+           $2 = 'revoked'
+           AND revoked_at IS NOT NULL
+         )
+       )
+       AND (
+         $3::integer IS NULL
+         OR (
+           revoked_at IS NULL
+           AND expires_at > NOW()
+           AND expires_at <= NOW() + ($3 * INTERVAL '1 day')
+         )
+       )
      ORDER BY created_at DESC`,
-    [validProjectId]
+    [validProjectId, status, validExpiringDays]
   );
 
   return result.rows;

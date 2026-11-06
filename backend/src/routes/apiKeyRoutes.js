@@ -127,8 +127,25 @@ const router = Router();
  *     summary: List API keys
  *     description: Returns API keys belonging to the project associated with the supplied API key.
  *     tags: [API Keys]
- *     security:
+  *     security:
  *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [all, active, expired, revoked]
+ *           default: all
+ *         description: Filter API keys by lifecycle status.
+ *       - in: query
+ *         name: expiringWithinDays
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *         description: Return active API keys expiring within the specified number of days.
  *     responses:
  *       200:
  *         description: API keys retrieved successfully.
@@ -238,13 +255,32 @@ router.use(apiKeyAuth, usageLogger, apiRateLimit);
 // List keys belonging to the authenticated project.
 router.get("/", async (req, res, next) => {
   try {
-    const data = await listApiKeys(req.apiKey.projectId);
+    const { status = "all", expiringWithinDays = null } = req.query;
+
+    const data = await listApiKeys({
+      projectId: req.apiKey.projectId,
+      status,
+      expiringWithinDays
+    });
 
     res.status(200).json({
       success: true,
       data
     });
   } catch (error) {
+    if (
+      error.code === "INVALID_API_KEY_STATUS" ||
+      error.code === "INVALID_EXPIRATION_WINDOW"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
+    }
+
     next(error);
   }
 });

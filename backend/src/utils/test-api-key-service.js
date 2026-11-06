@@ -42,7 +42,7 @@ async function runTest() {
       created.key.startsWith("kf_live_") ? "PASS" : "FAIL"
     );
 
-    const listed = await listApiKeys(projectId);
+    const listed = await listApiKeys({ projectId });
 
     console.log(
       "List key:",
@@ -65,7 +65,7 @@ async function runTest() {
 
     console.log("Revoke key:", revoked ? "PASS" : "FAIL");
 
-    const listedAgain = await listApiKeys(projectId);
+    const listedAgain = await listApiKeys({ projectId });
     const revokedKey = listedAgain.find(
       (item) => item.id === created.apiKey.id
     );
