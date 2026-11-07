@@ -10,7 +10,8 @@ import {
   listApiKeys,
   revokeApiKey,
   getApiKeyUsage,
-  rotateApiKey
+  rotateApiKey,
+  getApiKeyInsights
 } from "../services/apiKeyService.js";
 
 const router = Router();
@@ -122,12 +123,45 @@ const router = Router();
 
 /**
  * @swagger
+ * /api/v1/keys/insights:
+ *   get:
+ *     summary: Get API key usage insights
+ *     description: Returns unused, recently used, and expiring soon active API keys for the authenticated project.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: recentWithinDays
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *           default: 7
+ *       - in: query
+ *         name: expiringWithinDays
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *           default: 7
+ *     responses:
+ *       200:
+ *         description: API key usage insights retrieved successfully.
+ *       400:
+ *         description: Invalid insight window.
+ *       401:
+ *         description: API key missing or invalid.
+ */
+
+/**
+ * @swagger
  * /api/v1/keys:
  *   get:
  *     summary: List API keys
  *     description: Returns API keys belonging to the project associated with the supplied API key.
  *     tags: [API Keys]
-  *     security:
+ *     security:
  *       - ApiKeyAuth: []
  *     parameters:
  *       - in: query
@@ -191,7 +225,10 @@ const router = Router();
  *         description: API key missing, invalid, revoked, or expired.
  *       500:
  *         description: Internal server error.
- *
+ */
+
+/**
+ * @swagger
  * /api/v1/keys/{id}:
  *   delete:
  *     summary: Revoke an API key
@@ -218,7 +255,11 @@ const router = Router();
  *         description: API key not found or already revoked.
  *       500:
  *         description: Internal server error.
- *   /api/v1/keys/{id}/rotate:
+ */
+
+/**
+ * @swagger
+ * /api/v1/keys/{id}/rotate:
  *   post:
  *     summary: Rotate an API key
  *     description: Generates a replacement API key and revokes the existing key. The new plaintext key is returned only once.
@@ -308,6 +349,41 @@ router.post("/", async (req, res, next) => {
         success: false,
         error: {
           code: "INVALID_API_KEY_INPUT",
+          message: error.message
+        }
+      });
+    }
+
+    next(error);
+  }
+});
+
+router.get("/insights", async (req, res, next) => {
+  try {
+    const {
+      recentWithinDays = "7",
+      expiringWithinDays = "7"
+    } = req.query;
+
+    const data = await getApiKeyInsights({
+      projectId: req.apiKey.projectId,
+      recentWithinDays,
+      expiringWithinDays
+    });
+
+    res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    if (
+      error.code === "INVALID_RECENT_WINDOW" ||
+      error.code === "INVALID_EXPIRATION_WINDOW"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: error.code,
           message: error.message
         }
       });

@@ -6,7 +6,10 @@ import request from "supertest";
 
 import app from "../src/app.js";
 import pool from "../src/config/database.js";
-import { createApiKey } from "../src/services/apiKeyService.js";
+import {
+    createApiKey,
+    getApiKeyInsights
+} from "../src/services/apiKeyService.js";
 import redisClient, { connectRedis } from "../src/config/redis.js";
 
 describe("API Key Management API", () => {
@@ -84,10 +87,7 @@ describe("API Key Management API", () => {
             .get("/api/v1/keys");
 
         assert.equal(response.status, 401);
-        assert.equal(
-            response.body.error.code,
-            "API_KEY_MISSING"
-        );
+        assert.equal(response.body.error.code, "API_KEY_MISSING");
     });
 
     it("should create a new API key", async () => {
@@ -127,7 +127,7 @@ describe("API Key Management API", () => {
         );
     });
 
-        it("should create an API key with a future expiration date", async () => {
+    it("should create an API key with a future expiration date", async () => {
         const expiresAt = new Date(
             Date.now() + 7 * 24 * 60 * 60 * 1000
         ).toISOString();
@@ -199,14 +199,11 @@ describe("API Key Management API", () => {
         );
 
         assert.ok(createdKey);
-        assert.equal(
-            createdKey.name,
-            "API Key Creation Test"
-        );
+        assert.equal(createdKey.name, "API Key Creation Test");
         assert.equal(createdKey.key_hash, undefined);
     });
 
-        it("should return only active API keys", async () => {
+    it("should return only active API keys", async () => {
         const expired = await createApiKey({
             projectId,
             name: "Lifecycle Expired Test"
@@ -357,7 +354,6 @@ describe("API Key Management API", () => {
         );
     });
 
-
     it("should update last_used_at after successful API key authentication", async () => {
         const created = await createApiKey({
             projectId,
@@ -366,7 +362,6 @@ describe("API Key Management API", () => {
 
         const apiKeyId = created.apiKey.id;
 
-        // Initially, the key should not have been used.
         const before = await pool.query(
             "SELECT last_used_at FROM api_keys WHERE id = $1",
             [apiKeyId]
@@ -374,7 +369,6 @@ describe("API Key Management API", () => {
 
         assert.equal(before.rows[0].last_used_at, null);
 
-        // Authenticate using the newly created key.
         const response = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", created.key);
@@ -382,7 +376,6 @@ describe("API Key Management API", () => {
         assert.equal(response.status, 200);
         assert.equal(response.body.success, true);
 
-        // Verify that last_used_at was updated.
         const after = await pool.query(
             "SELECT last_used_at FROM api_keys WHERE id = $1",
             [apiKeyId]
@@ -402,7 +395,6 @@ describe("API Key Management API", () => {
 
         const apiKeyId = created.apiKey.id;
 
-        // Manually expire the key for testing.
         await pool.query(
             `UPDATE api_keys
              SET expires_at = NOW() - INTERVAL '1 minute'
@@ -420,7 +412,6 @@ describe("API Key Management API", () => {
             "API_KEY_EXPIRED"
         );
 
-        // Failed authentication must not update last_used_at.
         const result = await pool.query(
             "SELECT last_used_at FROM api_keys WHERE id = $1",
             [apiKeyId]
@@ -429,23 +420,18 @@ describe("API Key Management API", () => {
         assert.equal(result.rows[0].last_used_at, null);
     });
 
-
-
-
     it("should return usage statistics for an API key", async () => {
         const targetKey = await createApiKey({
             projectId,
             name: "Usage Statistics Test"
         });
 
-        // Generate a successful request using the target key.
         const protectedResponse = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", targetKey.key);
 
         assert.equal(protectedResponse.status, 200);
 
-        // Retrieve usage statistics using the bootstrap key.
         const response = await request(app)
             .get(`/api/v1/keys/${targetKey.apiKey.id}/usage?days=7`)
             .set("x-api-key", bootstrapKey);
@@ -486,7 +472,6 @@ describe("API Key Management API", () => {
     });
 
     it("should prevent access to usage statistics from another project", async () => {
-        // Create another project belonging to the test user.
         const projectResponse = await request(app)
             .post("/api/v1/projects")
             .set("Authorization", `Bearer ${token}`)
@@ -499,13 +484,11 @@ describe("API Key Management API", () => {
 
         const otherProjectId = projectResponse.body.data.project.id;
 
-        // Generate an API key belonging to the other project.
         const otherProjectKey = await createApiKey({
             projectId: otherProjectId,
             name: "Other Project Test Key"
         });
 
-        // Attempt to access a key belonging to the original project.
         const response = await request(app)
             .get(`/api/v1/keys/${createdKeyId}/usage?days=7`)
             .set("x-api-key", otherProjectKey.key);
@@ -516,7 +499,6 @@ describe("API Key Management API", () => {
             "API_KEY_NOT_FOUND"
         );
     });
-
 
     it("should revoke an API key", async () => {
         const response = await request(app)
@@ -529,8 +511,6 @@ describe("API Key Management API", () => {
         assert.ok(response.body.data.revoked_at);
     });
 
-
-
     it("should reject rotation of an expired API key", async () => {
         const targetKey = await createApiKey({
             projectId,
@@ -540,7 +520,6 @@ describe("API Key Management API", () => {
             ).toISOString()
         });
 
-        // Expire the key directly in the database.
         await pool.query(
             `UPDATE api_keys
              SET expires_at = NOW() - INTERVAL '1 minute'
@@ -588,8 +567,7 @@ describe("API Key Management API", () => {
         );
     });
 
-
-        it("should successfully rotate an API key", async () => {
+    it("should successfully rotate an API key", async () => {
         const oldKey = await createApiKey({
             projectId,
             name: "Rotation Success Test"
@@ -607,12 +585,12 @@ describe("API Key Management API", () => {
 
         assert.ok(newKey.startsWith("kf_live_"));
         assert.ok(newKeyId);
+
         assert.equal(
             response.body.data.apiKey.name,
             "Rotation Success Test"
         );
 
-        // Verify the old key has been revoked.
         const oldKeyResult = await pool.query(
             "SELECT revoked_at FROM api_keys WHERE id = $1",
             [oldKey.apiKey.id]
@@ -620,14 +598,12 @@ describe("API Key Management API", () => {
 
         assert.ok(oldKeyResult.rows[0].revoked_at);
 
-        // Verify the new key works.
         const newKeyResponse = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", newKey);
 
         assert.equal(newKeyResponse.status, 200);
 
-        // Verify the old key no longer works.
         const oldKeyResponse = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", oldKey.key);
@@ -657,14 +633,12 @@ describe("API Key Management API", () => {
             name: "Already Revoked Rotation Test"
         });
 
-        // Revoke the key first.
         const revokeResponse = await request(app)
             .delete(`/api/v1/keys/${targetKey.apiKey.id}`)
             .set("x-api-key", bootstrapKey);
 
         assert.equal(revokeResponse.status, 200);
 
-        // Attempt to rotate the revoked key.
         const response = await request(app)
             .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
             .set("x-api-key", bootstrapKey);
@@ -682,7 +656,6 @@ describe("API Key Management API", () => {
             name: "Project Isolation Rotation Test"
         });
 
-        // Create another project.
         const projectResponse = await request(app)
             .post("/api/v1/projects")
             .set("Authorization", `Bearer ${token}`)
@@ -701,7 +674,6 @@ describe("API Key Management API", () => {
             name: "Other Project Rotation Key"
         });
 
-        // Authenticate with another project's key.
         const response = await request(app)
             .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
             .set("x-api-key", otherProjectKey.key);
@@ -712,6 +684,7 @@ describe("API Key Management API", () => {
             "API_KEY_NOT_FOUND"
         );
     });
+
     it("should reject authentication using a revoked API key", async () => {
         const response = await request(app)
             .get("/api/v1/protected")
@@ -733,6 +706,96 @@ describe("API Key Management API", () => {
         assert.equal(
             response.body.error.code,
             "API_KEY_NOT_FOUND"
+        );
+    });
+
+    it("should return API key usage insights", async () => {
+        const unusedKey = await createApiKey({
+            projectId,
+            name: "Insights Unused Test"
+        });
+
+        const recentKey = await createApiKey({
+            projectId,
+            name: "Insights Recent Test"
+        });
+
+        await pool.query(
+            `UPDATE api_keys
+             SET last_used_at = NOW() - INTERVAL '1 day'
+             WHERE id = $1`,
+            [recentKey.apiKey.id]
+        );
+
+        const insights = await getApiKeyInsights({
+            projectId
+        });
+
+        assert.ok(insights.unused_count >= 1);
+        assert.ok(insights.recently_used_count >= 1);
+
+        assert.ok(
+            insights.unused_keys.some(
+                (key) => String(key.id) === String(unusedKey.apiKey.id)
+            )
+        );
+
+        assert.ok(
+            insights.recently_used_keys.some(
+                (key) => String(key.id) === String(recentKey.apiKey.id)
+            )
+        );
+
+        assert.equal(
+            Object.hasOwn(insights.unused_keys[0], "key_hash"),
+            false
+        );
+    });
+
+    it("should return active API keys expiring within the requested days", async () => {
+        const expiringKey = await createApiKey({
+            projectId,
+            name: "Insights Expiring Test",
+            expiresAt: new Date(
+                Date.now() + 3 * 24 * 60 * 60 * 1000
+            ).toISOString()
+        });
+
+        const insights = await getApiKeyInsights({
+            projectId,
+            expiringWithinDays: 7
+        });
+
+        assert.ok(insights.expiring_soon_count >= 1);
+
+        assert.ok(
+            insights.expiring_soon_keys.some(
+                (key) => String(key.id) === String(expiringKey.apiKey.id)
+            )
+        );
+    });
+
+    it("should reject an invalid recent usage window", async () => {
+        await assert.rejects(
+            getApiKeyInsights({
+                projectId,
+                recentWithinDays: 0
+            }),
+            {
+                code: "INVALID_RECENT_WINDOW"
+            }
+        );
+    });
+
+    it("should reject an invalid expiration window", async () => {
+        await assert.rejects(
+            getApiKeyInsights({
+                projectId,
+                expiringWithinDays: 400
+            }),
+            {
+                code: "INVALID_EXPIRATION_WINDOW"
+            }
         );
     });
 });

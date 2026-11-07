@@ -154,6 +154,99 @@ export async function listApiKeys({
   return result.rows;
 }
 
+export async function getApiKeyInsights({
+  projectId,
+  recentWithinDays = 7,
+  expiringWithinDays = 7
+}) {
+  const validProjectId = validateId(projectId, "projectId");
+
+  const validRecentDays = Number(recentWithinDays);
+  const validExpiringDays = Number(expiringWithinDays);
+
+  if (
+    !Number.isInteger(validRecentDays) ||
+    validRecentDays < 1 ||
+    validRecentDays > 365
+  ) {
+    const error = new TypeError(
+      "recentWithinDays must be an integer between 1 and 365."
+    );
+    error.code = "INVALID_RECENT_WINDOW";
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(validExpiringDays) ||
+    validExpiringDays < 1 ||
+    validExpiringDays > 365
+  ) {
+    const error = new TypeError(
+      "expiringWithinDays must be an integer between 1 and 365."
+    );
+    error.code = "INVALID_EXPIRATION_WINDOW";
+    throw error;
+  }
+
+  const result = await pool.query(
+    `WITH active_keys AS (
+       SELECT
+         id,
+         name,
+         key_prefix,
+         last_used_at,
+         expires_at,
+         created_at
+       FROM api_keys
+       WHERE project_id = $1
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())
+     )
+
+     SELECT
+       COUNT(*) FILTER (
+         WHERE last_used_at IS NULL
+       )::int AS unused_count,
+
+       COUNT(*) FILTER (
+         WHERE last_used_at >= NOW() - ($2 * INTERVAL '1 day')
+       )::int AS recently_used_count,
+
+       COUNT(*) FILTER (
+         WHERE expires_at > NOW()
+           AND expires_at <= NOW() + ($3 * INTERVAL '1 day')
+       )::int AS expiring_soon_count,
+
+       COALESCE(
+         jsonb_agg(to_jsonb(k) ORDER BY k.created_at DESC)
+         FILTER (WHERE k.last_used_at IS NULL),
+         '[]'::jsonb
+       ) AS unused_keys,
+
+       COALESCE(
+         jsonb_agg(to_jsonb(k) ORDER BY k.last_used_at DESC)
+         FILTER (
+           WHERE k.last_used_at >= NOW() - ($2 * INTERVAL '1 day')
+         ),
+         '[]'::jsonb
+       ) AS recently_used_keys,
+
+       COALESCE(
+         jsonb_agg(to_jsonb(k) ORDER BY k.expires_at ASC)
+         FILTER (
+           WHERE k.expires_at > NOW()
+             AND k.expires_at <= NOW() + ($3 * INTERVAL '1 day')
+         ),
+         '[]'::jsonb
+       ) AS expiring_soon_keys
+
+     FROM active_keys k`,
+    [validProjectId, validRecentDays, validExpiringDays]
+  );
+
+  return result.rows[0];
+}
+
 export async function revokeApiKey({ projectId, apiKeyId }) {
   const validProjectId = validateId(projectId, "projectId");
   const validApiKeyId = validateId(apiKeyId, "apiKeyId");
