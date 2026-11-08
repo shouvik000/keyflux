@@ -18,6 +18,183 @@ const router = Router();
 
 /**
  * @swagger
+ * components:
+ *   schemas:
+ *     CreateApiKeyRequest:
+ *       type: object
+ *       required:
+ *         - name
+ *       properties:
+ *         name:
+ *           type: string
+ *           maxLength: 100
+ *           example: Production API Key
+ *         expiresAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *           example: "2027-12-31T23:59:59.000Z"
+ *         rateLimitMax:
+ *           type: integer
+ *           minimum: 1
+ *           default: 100
+ *           example: 200
+ *           description: Maximum requests allowed per time window.
+ *         rateLimitWindowMs:
+ *           type: integer
+ *           minimum: 1
+ *           default: 60000
+ *           example: 60000
+ *           description: Rate-limit window duration in milliseconds.
+ *
+ *     ApiKey:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *           example: 12
+ *         project_id:
+ *           type: integer
+ *           example: 3
+ *         name:
+ *           type: string
+ *           example: Production API Key
+ *         key_prefix:
+ *           type: string
+ *           example: kf_live_abcd
+ *         rate_limit_max:
+ *           type: integer
+ *           example: 100
+ *         rate_limit_window_ms:
+ *           type: integer
+ *           example: 60000
+ *         last_used_at:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         expires_at:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         revoked_at:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         created_at:
+ *           type: string
+ *           format: date-time
+ *
+ *     ApiKeyError:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: false
+ *         error:
+ *           type: object
+ *           properties:
+ *             code:
+ *               type: string
+ *               example: API_KEY_INVALID
+ *             message:
+ *               type: string
+ *               example: The API key is invalid.
+ */
+
+/**
+ * @swagger
+ * /api/v1/keys:
+ *   get:
+ *     summary: List API keys
+ *     description: Returns API keys belonging to the authenticated project.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [all, active, expired, revoked]
+ *           default: all
+ *         description: Filter API keys by lifecycle status.
+ *       - in: query
+ *         name: expiringWithinDays
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *         description: Return active API keys expiring within the specified number of days.
+ *     responses:
+ *       200:
+ *         description: API keys retrieved successfully.
+ *       400:
+ *         description: Invalid filter parameters.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       500:
+ *         description: Internal server error.
+ *
+ *   post:
+ *     summary: Create an API key
+ *     description: Creates a new API key with optional expiration and custom rate limits. The full key is returned only once.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateApiKeyRequest'
+ *     responses:
+ *       201:
+ *         description: API key created successfully.
+ *       400:
+ *         description: Invalid API key input.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       500:
+ *         description: Internal server error.
+ */
+
+/**
+ * @swagger
+ * /api/v1/keys/insights:
+ *   get:
+ *     summary: Get API key usage insights
+ *     description: Returns unused, recently used, and expiring soon active API keys.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: recentWithinDays
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *           default: 7
+ *       - in: query
+ *         name: expiringWithinDays
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *           default: 7
+ *     responses:
+ *       200:
+ *         description: API key usage insights retrieved successfully.
+ *       400:
+ *         description: Invalid insight window.
+ *       401:
+ *         description: API key missing or invalid.
+ */
+
+/**
+ * @swagger
  * /api/v1/keys/{id}/usage:
  *   get:
  *     summary: Get API key usage statistics
@@ -56,173 +233,32 @@ const router = Router();
 
 /**
  * @swagger
- * components:
- *   schemas:
- *     CreateApiKeyRequest:
- *       type: object
- *       required:
- *         - name
- *       properties:
- *         name:
- *           type: string
- *           maxLength: 100
- *           example: Production API Key
- *         expiresAt:
- *           type: string
- *           format: date-time
- *           nullable: true
- *           example: "2027-12-31T23:59:59.000Z"
- *
- *     ApiKey:
- *       type: object
- *       properties:
- *         id:
- *           type: integer
- *           example: 12
- *         project_id:
- *           type: integer
- *           example: 3
- *         name:
- *           type: string
- *           example: Production API Key
- *         key_prefix:
- *           type: string
- *           example: kf_live_abcd
- *         last_used_at:
- *           type: string
- *           format: date-time
- *           nullable: true
- *         expires_at:
- *           type: string
- *           format: date-time
- *           nullable: true
- *         revoked_at:
- *           type: string
- *           format: date-time
- *           nullable: true
- *         created_at:
- *           type: string
- *           format: date-time
- *
- *     ApiKeyError:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: false
- *         error:
- *           type: object
- *           properties:
- *             code:
- *               type: string
- *               example: API_KEY_INVALID
- *             message:
- *               type: string
- *               example: The API key is invalid.
- */
-
-/**
- * @swagger
- * /api/v1/keys/insights:
- *   get:
- *     summary: Get API key usage insights
- *     description: Returns unused, recently used, and expiring soon active API keys for the authenticated project.
- *     tags: [API Keys]
- *     security:
- *       - ApiKeyAuth: []
- *     parameters:
- *       - in: query
- *         name: recentWithinDays
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 365
- *           default: 7
- *       - in: query
- *         name: expiringWithinDays
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 365
- *           default: 7
- *     responses:
- *       200:
- *         description: API key usage insights retrieved successfully.
- *       400:
- *         description: Invalid insight window.
- *       401:
- *         description: API key missing or invalid.
- */
-
-/**
- * @swagger
- * /api/v1/keys:
- *   get:
- *     summary: List API keys
- *     description: Returns API keys belonging to the project associated with the supplied API key.
- *     tags: [API Keys]
- *     security:
- *       - ApiKeyAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         required: false
- *         schema:
- *           type: string
- *           enum: [all, active, expired, revoked]
- *           default: all
- *         description: Filter API keys by lifecycle status.
- *       - in: query
- *         name: expiringWithinDays
- *         required: false
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 365
- *         description: Return active API keys expiring within the specified number of days.
- *     responses:
- *       200:
- *         description: API keys retrieved successfully.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/ApiKey'
- *       401:
- *         description: API key missing, invalid, revoked, or expired.
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ApiKeyError'
- *       500:
- *         description: Internal server error.
- *
+ * /api/v1/keys/{id}/rotate:
  *   post:
- *     summary: Create an API key
- *     description: Creates a new API key for the authenticated project. The full key is returned only once.
+ *     summary: Rotate an API key
+ *     description: Generates a replacement API key and revokes the existing key. The new plaintext key is returned only once.
  *     tags: [API Keys]
  *     security:
  *       - ApiKeyAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/CreateApiKeyRequest'
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: ID of the API key to rotate.
  *     responses:
- *       201:
- *         description: API key created successfully. Save the full key because it will not be shown again.
+ *       200:
+ *         description: API key rotated successfully.
  *       400:
- *         description: Invalid API key input.
+ *         description: Invalid API key ID.
  *       401:
  *         description: API key missing, invalid, revoked, or expired.
+ *       404:
+ *         description: API key not found or already revoked.
+ *       409:
+ *         description: The API key has expired and cannot be rotated.
  *       500:
  *         description: Internal server error.
  */
@@ -257,38 +293,6 @@ const router = Router();
  *         description: Internal server error.
  */
 
-/**
- * @swagger
- * /api/v1/keys/{id}/rotate:
- *   post:
- *     summary: Rotate an API key
- *     description: Generates a replacement API key and revokes the existing key. The new plaintext key is returned only once.
- *     tags: [API Keys]
- *     security:
- *       - ApiKeyAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *           minimum: 1
- *         description: ID of the API key to rotate.
- *     responses:
- *       200:
- *         description: API key rotated successfully. Save the new key securely.
- *       400:
- *         description: Invalid API key ID.
- *       401:
- *         description: API key missing, invalid, revoked, or expired.
- *       404:
- *         description: API key not found or already revoked.
- *       409:
- *         description: The API key has expired and cannot be rotated.
- *       500:
- *         description: Internal server error.
- */
-
 // Authenticate requests and apply the existing middleware.
 router.use(apiKeyAuth, usageLogger, apiRateLimit);
 
@@ -296,7 +300,10 @@ router.use(apiKeyAuth, usageLogger, apiRateLimit);
 // List keys belonging to the authenticated project.
 router.get("/", async (req, res, next) => {
   try {
-    const { status = "all", expiringWithinDays = null } = req.query;
+    const {
+      status = "all",
+      expiringWithinDays = null
+    } = req.query;
 
     const data = await listApiKeys({
       projectId: req.apiKey.projectId,
@@ -330,17 +337,25 @@ router.get("/", async (req, res, next) => {
 // Create a new key for the authenticated project.
 router.post("/", async (req, res, next) => {
   try {
-    const { name, expiresAt = null } = req.body ?? {};
+    const {
+      name,
+      expiresAt = null,
+      rateLimitMax = 100,
+      rateLimitWindowMs = 60000
+    } = req.body ?? {};
 
     const result = await createApiKey({
       projectId: req.apiKey.projectId,
       name,
-      expiresAt
+      expiresAt,
+      rateLimitMax,
+      rateLimitWindowMs
     });
 
     res.status(201).json({
       success: true,
-      message: "API key created successfully. Save the key now; it will not be shown again.",
+      message:
+        "API key created successfully. Save the key now; it will not be shown again.",
       data: result
     });
   } catch (error) {
@@ -358,6 +373,7 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+// GET /api/v1/keys/insights
 router.get("/insights", async (req, res, next) => {
   try {
     const {
@@ -415,15 +431,16 @@ router.get("/:id/usage", async (req, res, next) => {
       days: Number(days)
     });
 
-   if (!data) {
-  return res.status(404).json({
-    success: false,
-    error: {
-      code: "API_KEY_NOT_FOUND",
-      message: "The API key was not found in the authenticated project."
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "API_KEY_NOT_FOUND",
+          message:
+            "The API key was not found in the authenticated project."
+        }
+      });
     }
-  });
-}
 
     res.status(200).json({
       success: true,
@@ -444,7 +461,6 @@ router.get("/:id/usage", async (req, res, next) => {
   }
 });
 
-// DELETE /api/v1/keys/:id
 // POST /api/v1/keys/:id/rotate
 // Generate a replacement key and revoke the previous key.
 router.post("/:id/rotate", async (req, res, next) => {
@@ -459,14 +475,16 @@ router.post("/:id/rotate", async (req, res, next) => {
         success: false,
         error: {
           code: "API_KEY_NOT_FOUND",
-          message: "The API key was not found or has already been revoked."
+          message:
+            "The API key was not found or has already been revoked."
         }
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: "API key rotated successfully. Save your new key securely.",
+      message:
+        "API key rotated successfully. Save your new key securely.",
       data: {
         key: result.key,
         apiKey: result.apiKey,
@@ -497,6 +515,8 @@ router.post("/:id/rotate", async (req, res, next) => {
     next(error);
   }
 });
+
+// DELETE /api/v1/keys/:id
 // Revoke a key only if it belongs to the authenticated project.
 router.delete("/:id", async (req, res, next) => {
   try {
@@ -510,7 +530,8 @@ router.delete("/:id", async (req, res, next) => {
         success: false,
         error: {
           code: "API_KEY_NOT_FOUND",
-          message: "The API key was not found or has already been revoked."
+          message:
+            "The API key was not found or has already been revoked."
         }
       });
     }

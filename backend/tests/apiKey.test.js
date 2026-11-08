@@ -1,4 +1,4 @@
-﻿
+
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -113,6 +113,102 @@ describe("API Key Management API", () => {
             undefined
         );
     });
+
+    it("should create an API key with custom rate limits", async () => {
+        const response = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Custom Rate Limit Test",
+                rateLimitMax: 25,
+                rateLimitWindowMs: 30000
+            });
+
+        assert.equal(response.status, 201);
+        assert.equal(response.body.success, true);
+
+        assert.equal(
+            response.body.data.apiKey.rate_limit_max,
+            25
+        );
+
+        assert.equal(
+            response.body.data.apiKey.rate_limit_window_ms,
+            30000
+        );
+    });
+
+    it("should use default rate limits when not provided", async () => {
+        const response = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Default Rate Limit Test"
+            });
+
+        assert.equal(response.status, 201);
+
+        assert.equal(
+            response.body.data.apiKey.rate_limit_max,
+            100
+        );
+
+        assert.equal(
+            response.body.data.apiKey.rate_limit_window_ms,
+            60000
+        );
+    });
+
+    it("should reject invalid custom rate limits", async () => {
+        const invalidValues = [
+            0,
+            -1,
+            1.5,
+            Number.MAX_SAFE_INTEGER + 1
+        ];
+
+        for (const rateLimitMax of invalidValues) {
+            const response = await request(app)
+                .post("/api/v1/keys")
+                .set("x-api-key", bootstrapKey)
+                .send({
+                    name: "Invalid Rate Limit Test",
+                    rateLimitMax
+                });
+
+            assert.equal(response.status, 400);
+            assert.equal(
+                response.body.error.code,
+                "INVALID_API_KEY_INPUT"
+            );
+        }
+    });
+
+    it("should reject invalid custom rate limit windows", async () => {
+        const invalidValues = [
+            0,
+            -1,
+            1.5,
+            Number.MAX_SAFE_INTEGER + 1
+        ];
+
+        for (const rateLimitWindowMs of invalidValues) {
+            const response = await request(app)
+                .post("/api/v1/keys")
+                .set("x-api-key", bootstrapKey)
+                .send({
+                    name: "Invalid Rate Window Test",
+                    rateLimitWindowMs
+                });
+
+            assert.equal(response.status, 400);
+            assert.equal(
+                response.body.error.code,
+                "INVALID_API_KEY_INPUT"
+            );
+        }
+    });
+
 
     it("should reject API key creation with an invalid name", async () => {
         const response = await request(app)
@@ -566,6 +662,28 @@ describe("API Key Management API", () => {
             new Date(expiresAt).getTime()
         );
     });
+
+    it("should preserve custom rate limits when rotating an API key", async () => {
+        const oldKey = await createApiKey({
+            projectId,
+            name: "Custom Rate Limit Rotation Test",
+            rateLimitMax: 25,
+            rateLimitWindowMs: 30000
+        });
+
+        const response = await request(app)
+            .post(`/api/v1/keys/${oldKey.apiKey.id}/rotate`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const replacementKey = response.body.data.apiKey;
+
+        assert.equal(replacementKey.rate_limit_max, 25);
+        assert.equal(replacementKey.rate_limit_window_ms, 30000);
+    });
+
 
     it("should successfully rotate an API key", async () => {
         const oldKey = await createApiKey({

@@ -35,7 +35,7 @@ export function createApiRateLimit({
 
   return async function apiRateLimit(req, res, next) {
     try {
-      // Authentication middleware must run before this middleware.
+      // Authentication middleware must run first.
       const apiKeyId = req.apiKey?.id;
 
       if (!apiKeyId) {
@@ -46,6 +46,19 @@ export function createApiRateLimit({
             message: "Authenticate with an API key before making this request."
           }
         });
+      }
+
+      // Use the authenticated API key's individual settings.
+      const keyMaxRequests = req.apiKey.rateLimitMax ?? maxRequests;
+      const keyWindowMs = req.apiKey.rateLimitWindowMs ?? windowMs;
+
+      if (
+        !Number.isSafeInteger(keyMaxRequests) ||
+        keyMaxRequests < 1 ||
+        !Number.isSafeInteger(keyWindowMs) ||
+        keyWindowMs < 1
+      ) {
+        throw new Error("Invalid API key rate-limit configuration.");
       }
 
       if (!redisClient.isReady) {
@@ -59,13 +72,13 @@ export function createApiRateLimit({
       }
 
       const now = Date.now();
-      const windowNumber = Math.floor(now / windowMs);
-      const windowEnd = (windowNumber + 1) * windowMs;
+      const windowNumber = Math.floor(now / keyWindowMs);
+      const windowEnd = (windowNumber + 1) * keyWindowMs;
       const ttlMs = Math.max(1, windowEnd - now);
 
-      // Each API key has its own counter for each time window.
+      // Separate counters by API key and window size.
       const redisKey =
-        `keyflux:rate-limit:${apiKeyId}:${windowNumber}`;
+        `keyflux:rate-limit:${apiKeyId}:${keyWindowMs}:${windowNumber}`;
 
       const result = await redisClient.eval(RATE_LIMIT_SCRIPT, {
         keys: [redisKey],
@@ -73,14 +86,14 @@ export function createApiRateLimit({
       });
 
       const requestCount = Number(result[0]);
-      const remaining = Math.max(0, maxRequests - requestCount);
+      const remaining = Math.max(0, keyMaxRequests - requestCount);
       const resetAt = Math.ceil(windowEnd / 1000);
 
-      res.set("RateLimit-Limit", String(maxRequests));
+      res.set("RateLimit-Limit", String(keyMaxRequests));
       res.set("RateLimit-Remaining", String(remaining));
       res.set("RateLimit-Reset", String(resetAt));
 
-      if (requestCount > maxRequests) {
+      if (requestCount > keyMaxRequests) {
         const retryAfter = Math.max(
           1,
           Math.ceil((windowEnd - Date.now()) / 1000)
@@ -102,7 +115,6 @@ export function createApiRateLimit({
     } catch (error) {
       console.error("API rate limiting failed:", error.message);
 
-      // Fail closed if Redis cannot enforce the request limit.
       return res.status(503).json({
         success: false,
         error: {

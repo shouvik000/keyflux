@@ -44,28 +44,77 @@ function validateExpiration(expiresAt) {
   return date.toISOString();
 }
 
+function validateRateLimit(value, fieldName, defaultValue) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  const number = Number(value);
+
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw new TypeError(
+      `${fieldName} must be a positive safe integer.`
+    );
+  }
+
+  return number;
+}
+
+// Create a new API key.
 export async function createApiKey({
   projectId,
   name,
-  expiresAt = null
+  expiresAt = null,
+  rateLimitMax = 100,
+  rateLimitWindowMs = 60000
 }) {
   const validProjectId = validateId(projectId, "projectId");
   const validName = validateName(name);
   const validExpiration = validateExpiration(expiresAt);
 
+  const validRateLimitMax = validateRateLimit(
+    rateLimitMax,
+    "rateLimitMax",
+    100
+  );
+
+  const validRateLimitWindowMs = validateRateLimit(
+    rateLimitWindowMs,
+    "rateLimitWindowMs",
+    60000
+  );
+
   const generated = generateApiKey();
 
   const result = await pool.query(
     `INSERT INTO api_keys
-       (project_id, name, key_prefix, key_hash, expires_at)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, project_id, name, key_prefix, expires_at, created_at`,
+       (
+         project_id,
+         name,
+         key_prefix,
+         key_hash,
+         expires_at,
+         rate_limit_max,
+         rate_limit_window_ms
+       )
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING
+       id,
+       project_id,
+       name,
+       key_prefix,
+       expires_at,
+       rate_limit_max,
+       rate_limit_window_ms,
+       created_at`,
     [
       validProjectId,
       validName,
       generated.keyPrefix,
       generated.keyHash,
-      validExpiration
+      validExpiration,
+      validRateLimitMax,
+      validRateLimitWindowMs
     ]
   );
 
@@ -75,6 +124,7 @@ export async function createApiKey({
   };
 }
 
+// List API keys belonging to a project.
 export async function listApiKeys({
   projectId,
   status = "all",
@@ -88,6 +138,7 @@ export async function listApiKeys({
     const error = new TypeError(
       "status must be one of: all, active, expired, revoked."
     );
+
     error.code = "INVALID_API_KEY_STATUS";
     throw error;
   }
@@ -105,6 +156,7 @@ export async function listApiKeys({
       const error = new TypeError(
         "expiringWithinDays must be an integer between 1 and 365."
       );
+
       error.code = "INVALID_EXPIRATION_WINDOW";
       throw error;
     }
@@ -116,6 +168,8 @@ export async function listApiKeys({
        project_id,
        name,
        key_prefix,
+       rate_limit_max,
+       rate_limit_window_ms,
        last_used_at,
        expires_at,
        revoked_at,
@@ -154,6 +208,7 @@ export async function listApiKeys({
   return result.rows;
 }
 
+// Get API key usage insights.
 export async function getApiKeyInsights({
   projectId,
   recentWithinDays = 7,
@@ -172,6 +227,7 @@ export async function getApiKeyInsights({
     const error = new TypeError(
       "recentWithinDays must be an integer between 1 and 365."
     );
+
     error.code = "INVALID_RECENT_WINDOW";
     throw error;
   }
@@ -184,6 +240,7 @@ export async function getApiKeyInsights({
     const error = new TypeError(
       "expiringWithinDays must be an integer between 1 and 365."
     );
+
     error.code = "INVALID_EXPIRATION_WINDOW";
     throw error;
   }
@@ -247,6 +304,7 @@ export async function getApiKeyInsights({
   return result.rows[0];
 }
 
+// Revoke an API key.
 export async function revokeApiKey({ projectId, apiKeyId }) {
   const validProjectId = validateId(projectId, "projectId");
   const validApiKeyId = validateId(apiKeyId, "apiKeyId");
@@ -264,6 +322,7 @@ export async function revokeApiKey({ projectId, apiKeyId }) {
   return result.rows[0] ?? null;
 }
 
+// Get usage statistics for an individual API key.
 export async function getApiKeyUsage({
   projectId,
   apiKeyId,
@@ -278,8 +337,6 @@ export async function getApiKeyUsage({
 
   const validDays = Number(days);
 
-  // Calculate statistics for this API key only.
-  // The project condition prevents cross-project data access.
   const summaryResult = await pool.query(
     `SELECT
        COUNT(l.id)::int AS total_requests,
@@ -319,12 +376,10 @@ export async function getApiKeyUsage({
     [validApiKeyId, validProjectId, validDays]
   );
 
-  // Return null if the key does not belong to this project.
   if (summaryResult.rows.length === 0) {
     return null;
   }
 
-  // Calculate daily usage for the selected API key.
   const timelineResult = await pool.query(
     `SELECT
        TO_CHAR(
@@ -369,7 +424,7 @@ export async function getApiKeyUsage({
   };
 }
 
-
+// Rotate an API key while preserving its configuration.
 export async function rotateApiKey({ projectId, apiKeyId }) {
   const validProjectId = validateId(projectId, "projectId");
   const validApiKeyId = validateId(apiKeyId, "apiKeyId");
@@ -379,10 +434,16 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
   try {
     await client.query("BEGIN");
 
-    // Lock the existing key so simultaneous rotation requests
-    // cannot rotate the same key twice.
+    // Lock the existing key to prevent simultaneous rotations.
     const oldKeyResult = await client.query(
-      `SELECT id, project_id, name, expires_at, revoked_at
+      `SELECT
+         id,
+         project_id,
+         name,
+         expires_at,
+         revoked_at,
+         rate_limit_max,
+         rate_limit_window_ms
        FROM api_keys
        WHERE id = $1
          AND project_id = $2
@@ -392,41 +453,58 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
 
     const oldKey = oldKeyResult.rows[0];
 
-    // Do not reveal whether a key exists in another project.
     if (!oldKey || oldKey.revoked_at) {
       await client.query("ROLLBACK");
       return null;
     }
 
-    // An already expired key should not produce another expired key.
     if (
       oldKey.expires_at &&
       new Date(oldKey.expires_at).getTime() <= Date.now()
     ) {
-      const error = new Error("An expired API key cannot be rotated.");
+      const error = new Error(
+        "An expired API key cannot be rotated."
+      );
+
       error.code = "API_KEY_EXPIRED";
       throw error;
     }
 
-    // Generate a completely new API key.
     const generated = generateApiKey();
 
-    // Insert the replacement key.
+    // Preserve expiration and custom rate-limit settings.
     const newKeyResult = await client.query(
       `INSERT INTO api_keys
-         (project_id, name, key_prefix, key_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, project_id, name, key_prefix, expires_at, created_at`,
+         (
+           project_id,
+           name,
+           key_prefix,
+           key_hash,
+           expires_at,
+           rate_limit_max,
+           rate_limit_window_ms
+         )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING
+         id,
+         project_id,
+         name,
+         key_prefix,
+         expires_at,
+         rate_limit_max,
+         rate_limit_window_ms,
+         created_at`,
       [
         validProjectId,
         oldKey.name,
         generated.keyPrefix,
         generated.keyHash,
-        oldKey.expires_at
+        oldKey.expires_at,
+        oldKey.rate_limit_max,
+        oldKey.rate_limit_window_ms
       ]
     );
 
-    // Revoke the previous key.
     const revokedKeyResult = await client.query(
       `UPDATE api_keys
        SET revoked_at = NOW()
@@ -438,7 +516,9 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
     );
 
     if (revokedKeyResult.rowCount !== 1) {
-      throw new Error("Failed to revoke the previous API key.");
+      throw new Error(
+        "Failed to revoke the previous API key."
+      );
     }
 
     await client.query("COMMIT");

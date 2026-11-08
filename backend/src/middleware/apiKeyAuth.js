@@ -28,20 +28,24 @@ export async function apiKeyAuth(req, res, next) {
 
     const keyHash = hashApiKey(apiKey);
 
-    // Atomically validate the key and update its last-used timestamp.
+    // Validate the key and update its last-used timestamp atomically.
     const result = await pool.query(
       `UPDATE api_keys
        SET last_used_at = NOW()
        WHERE key_hash = $1
          AND revoked_at IS NULL
          AND (expires_at IS NULL OR expires_at > NOW())
-       RETURNING id, project_id`,
+       RETURNING
+         id,
+         project_id,
+         rate_limit_max,
+         rate_limit_window_ms`,
       [keyHash]
     );
 
     const key = result.rows[0];
 
-    // No active key was updated. Determine why authentication failed.
+    // Determine why authentication failed.
     if (!key) {
       const statusResult = await pool.query(
         `SELECT
@@ -94,9 +98,12 @@ export async function apiKeyAuth(req, res, next) {
       });
     }
 
+    // Attach authentication and rate-limit settings to the request.
     req.apiKey = {
       id: key.id,
-      projectId: key.project_id
+      projectId: key.project_id,
+      rateLimitMax: key.rate_limit_max,
+      rateLimitWindowMs: key.rate_limit_window_ms
     };
 
     return next();
