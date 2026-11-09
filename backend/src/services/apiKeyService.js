@@ -1,6 +1,7 @@
 
 import pool from "../config/database.js";
 import { generateApiKey } from "../utils/apiKey.js";
+import redisClient from "../config/redis.js";
 
 function validateId(value, fieldName) {
   const id = String(value ?? "");
@@ -421,6 +422,92 @@ export async function getApiKeyUsage({
       summary.average_response_time_ms
     ),
     timeline: timelineResult.rows
+  };
+}
+
+
+
+// Get current rate-limit usage for an individual API key.
+export async function getApiKeyRateLimit({
+  projectId,
+  apiKeyId
+}) {
+  const validProjectId = validateId(projectId, "projectId");
+  const validApiKeyId = validateId(apiKeyId, "apiKeyId");
+
+  // Find the API key and verify project ownership.
+  const result = await pool.query(
+    `SELECT
+       id,
+       name,
+       rate_limit_max,
+       rate_limit_window_ms
+     FROM api_keys
+     WHERE id = $1
+       AND project_id = $2`,
+    [validApiKeyId, validProjectId]
+  );
+
+  const apiKey = result.rows[0];
+
+  if (!apiKey) {
+    return null;
+  }
+
+  if (!redisClient.isReady) {
+    const error = new Error(
+      "Redis is currently unavailable."
+    );
+
+    error.code = "RATE_LIMITER_UNAVAILABLE";
+    throw error;
+  }
+
+  const now = Date.now();
+
+  const limit = apiKey.rate_limit_max;
+  const windowMs = apiKey.rate_limit_window_ms;
+
+  // Calculate the same window used by the rate-limit middleware.
+  const windowNumber = Math.floor(now / windowMs);
+  const windowEnd = (windowNumber + 1) * windowMs;
+
+  // Read the existing Redis counter.
+  const redisKey =
+    `keyflux:rate-limit:${apiKey.id}:${windowMs}:${windowNumber}`;
+
+  const [storedCount, ttl] = await Promise.all([
+    redisClient.get(redisKey),
+    redisClient.pTTL(redisKey)
+  ]);
+
+  const requestsUsed = storedCount
+    ? Number(storedCount)
+    : 0;
+
+  const requestsRemaining = Math.max(
+    0,
+    limit - requestsUsed
+  );
+
+  const usagePercentage = Math.min(
+    100,
+    Number(((requestsUsed / limit) * 100).toFixed(2))
+  );
+
+  return {
+    apiKeyId: apiKey.id,
+    name: apiKey.name,
+    limit,
+    requestsUsed,
+    requestsRemaining,
+    usagePercentage,
+    windowMs,
+    resetAt: new Date(windowEnd).toISOString(),
+    resetInSeconds: Math.max(
+      0,
+      Math.ceil((windowEnd - Date.now()) / 1000)
+    )
   };
 }
 

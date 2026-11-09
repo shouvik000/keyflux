@@ -1,4 +1,4 @@
-
+﻿
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -544,6 +544,128 @@ describe("API Key Management API", () => {
         assert.equal(typeof data.failed_requests, "number");
         assert.equal(typeof data.average_response_time_ms, "number");
         assert.ok(Array.isArray(data.timeline));
+    });
+
+        it("should return current rate-limit usage for an API key", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Rate Limit Analytics Test",
+            rateLimitMax: 25,
+            rateLimitWindowMs: 30000
+        });
+
+        const now = Date.now();
+        const windowNumber = Math.floor(now / 30000);
+        const windowEnd = (windowNumber + 1) * 30000;
+
+        const redisKey =
+            `keyflux:rate-limit:${targetKey.apiKey.id}:30000:${windowNumber}`;
+
+        // Seed the existing Redis counter with five requests.
+        await redisClient.set(redisKey, "5", {
+            PX: Math.max(1, windowEnd - now)
+        });
+
+        const response = await request(app)
+            .get(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const data = response.body.data;
+
+        assert.equal(data.apiKeyId, targetKey.apiKey.id);
+        assert.equal(data.name, "Rate Limit Analytics Test");
+        assert.equal(data.limit, 25);
+        assert.equal(data.requestsUsed, 5);
+        assert.equal(data.requestsRemaining, 20);
+        assert.equal(data.usagePercentage, 20);
+        assert.equal(data.windowMs, 30000);
+        assert.ok(data.resetAt);
+        assert.ok(data.resetInSeconds >= 0);
+    });
+
+    it("should return zero usage when no Redis counter exists", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Zero Rate Limit Usage Test",
+            rateLimitMax: 50,
+            rateLimitWindowMs: 30000
+        });
+
+        const response = await request(app)
+            .get(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const data = response.body.data;
+
+        assert.equal(data.limit, 50);
+        assert.equal(data.requestsUsed, 0);
+        assert.equal(data.requestsRemaining, 50);
+        assert.equal(data.usagePercentage, 0);
+    });
+
+    it("should reject an invalid API key ID for rate-limit analytics", async () => {
+        const response = await request(app)
+            .get("/api/v1/keys/invalid/rate-limit")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_API_KEY_ID"
+        );
+    });
+
+    it("should return 404 for a nonexistent API key rate-limit request", async () => {
+        const response = await request(app)
+            .get("/api/v1/keys/999999/rate-limit")
+            .set("x-api-key", bootstrapKey);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
+
+    it("should prevent rate-limit analytics access across projects", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Rate Limit Project Isolation Test"
+        });
+
+        const projectResponse = await request(app)
+            .post("/api/v1/projects")
+            .set("Authorization", `Bearer ${token}`)
+            .send({
+                name: "Rate Limit Analytics Isolation Project",
+                description: "Project isolation test."
+            });
+
+        assert.equal(projectResponse.status, 201);
+
+        const otherProjectId =
+            projectResponse.body.data.project.id;
+
+        const otherProjectKey = await createApiKey({
+            projectId: otherProjectId,
+            name: "Other Project Rate Limit Test"
+        });
+
+        const response = await request(app)
+            .get(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+            .set("x-api-key", otherProjectKey.key);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
     });
 
     it("should reject invalid usage statistics day ranges", async () => {

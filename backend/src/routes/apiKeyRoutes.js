@@ -11,7 +11,8 @@ import {
   revokeApiKey,
   getApiKeyUsage,
   rotateApiKey,
-  getApiKeyInsights
+  getApiKeyInsights,
+  getApiKeyRateLimit
 } from "../services/apiKeyService.js";
 
 const router = Router();
@@ -452,6 +453,56 @@ router.get("/:id/usage", async (req, res, next) => {
         success: false,
         error: {
           code: "INVALID_API_KEY_ID",
+          message: error.message
+        }
+      });
+    }
+
+    next(error);
+  }
+});
+
+
+// GET /api/v1/keys/:id/rate-limit
+// Get current rate-limit usage for a specific API key.
+router.get("/:id/rate-limit", async (req, res, next) => {
+  try {
+    const data = await getApiKeyRateLimit({
+      projectId: req.apiKey.projectId,
+      apiKeyId: req.params.id
+    });
+
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "API_KEY_NOT_FOUND",
+          message:
+            "The API key was not found in the authenticated project."
+        }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_API_KEY_ID",
+          message: error.message
+        }
+      });
+    }
+
+    if (error.code === "RATE_LIMITER_UNAVAILABLE") {
+      return res.status(503).json({
+        success: false,
+        error: {
+          code: error.code,
           message: error.message
         }
       });
