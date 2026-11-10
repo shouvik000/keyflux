@@ -6,13 +6,14 @@ import { apiRateLimit } from "../middleware/apiRateLimit.js";
 import usageLogger from "../middleware/usageLogger.js";
 
 import {
-  createApiKey,
-  listApiKeys,
-  revokeApiKey,
-  getApiKeyUsage,
-  rotateApiKey,
-  getApiKeyInsights,
-  getApiKeyRateLimit
+    createApiKey,
+    listApiKeys,
+    revokeApiKey,
+    getApiKeyUsage,
+    rotateApiKey,
+    getApiKeyInsights,
+    getApiKeyRateLimit,
+    updateApiKeyRateLimit
 } from "../services/apiKeyService.js";
 
 const router = Router();
@@ -300,312 +301,355 @@ router.use(apiKeyAuth, usageLogger, apiRateLimit);
 // GET /api/v1/keys
 // List keys belonging to the authenticated project.
 router.get("/", async (req, res, next) => {
-  try {
-    const {
-      status = "all",
-      expiringWithinDays = null
-    } = req.query;
+    try {
+        const {
+            status = "all",
+            expiringWithinDays = null
+        } = req.query;
 
-    const data = await listApiKeys({
-      projectId: req.apiKey.projectId,
-      status,
-      expiringWithinDays
-    });
+        const data = await listApiKeys({
+            projectId: req.apiKey.projectId,
+            status,
+            expiringWithinDays
+        });
 
-    res.status(200).json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    if (
-      error.code === "INVALID_API_KEY_STATUS" ||
-      error.code === "INVALID_EXPIRATION_WINDOW"
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: error.code,
-          message: error.message
+        res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        if (
+            error.code === "INVALID_API_KEY_STATUS" ||
+            error.code === "INVALID_EXPIRATION_WINDOW"
+        ) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: error.code,
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
 });
 
 // POST /api/v1/keys
 // Create a new key for the authenticated project.
 router.post("/", async (req, res, next) => {
-  try {
-    const {
-      name,
-      expiresAt = null,
-      rateLimitMax = 100,
-      rateLimitWindowMs = 60000
-    } = req.body ?? {};
+    try {
+        const {
+            name,
+            expiresAt = null,
+            rateLimitMax = 100,
+            rateLimitWindowMs = 60000
+        } = req.body ?? {};
 
-    const result = await createApiKey({
-      projectId: req.apiKey.projectId,
-      name,
-      expiresAt,
-      rateLimitMax,
-      rateLimitWindowMs
-    });
+        const result = await createApiKey({
+            projectId: req.apiKey.projectId,
+            name,
+            expiresAt,
+            rateLimitMax,
+            rateLimitWindowMs
+        });
 
-    res.status(201).json({
-      success: true,
-      message:
-        "API key created successfully. Save the key now; it will not be shown again.",
-      data: result
-    });
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_API_KEY_INPUT",
-          message: error.message
+        res.status(201).json({
+            success: true,
+            message:
+                "API key created successfully. Save the key now; it will not be shown again.",
+            data: result
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_INPUT",
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
 });
 
 // GET /api/v1/keys/insights
 router.get("/insights", async (req, res, next) => {
-  try {
-    const {
-      recentWithinDays = "7",
-      expiringWithinDays = "7"
-    } = req.query;
+    try {
+        const {
+            recentWithinDays = "7",
+            expiringWithinDays = "7"
+        } = req.query;
 
-    const data = await getApiKeyInsights({
-      projectId: req.apiKey.projectId,
-      recentWithinDays,
-      expiringWithinDays
-    });
+        const data = await getApiKeyInsights({
+            projectId: req.apiKey.projectId,
+            recentWithinDays,
+            expiringWithinDays
+        });
 
-    res.status(200).json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    if (
-      error.code === "INVALID_RECENT_WINDOW" ||
-      error.code === "INVALID_EXPIRATION_WINDOW"
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: error.code,
-          message: error.message
+        res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        if (
+            error.code === "INVALID_RECENT_WINDOW" ||
+            error.code === "INVALID_EXPIRATION_WINDOW"
+        ) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: error.code,
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
 });
 
 // GET /api/v1/keys/:id/usage
 // Get usage statistics for a specific API key.
 router.get("/:id/usage", async (req, res, next) => {
-  try {
-    const { days = "7" } = req.query;
+    try {
+        const { days = "7" } = req.query;
 
-    if (!["7", "30", "90"].includes(String(days))) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_DAYS",
-          message: "days must be 7, 30, or 90."
+        if (!["7", "30", "90"].includes(String(days))) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_DAYS",
+                    message: "days must be 7, 30, or 90."
+                }
+            });
         }
-      });
-    }
 
-    const data = await getApiKeyUsage({
-      projectId: req.apiKey.projectId,
-      apiKeyId: req.params.id,
-      days: Number(days)
-    });
+        const data = await getApiKeyUsage({
+            projectId: req.apiKey.projectId,
+            apiKeyId: req.params.id,
+            days: Number(days)
+        });
 
-    if (!data) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: "API_KEY_NOT_FOUND",
-          message:
-            "The API key was not found in the authenticated project."
+        if (!data) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: "API_KEY_NOT_FOUND",
+                    message:
+                        "The API key was not found in the authenticated project."
+                }
+            });
         }
-      });
-    }
 
-    res.status(200).json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_API_KEY_ID",
-          message: error.message
+        res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_ID",
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
 });
-
 
 // GET /api/v1/keys/:id/rate-limit
 // Get current rate-limit usage for a specific API key.
 router.get("/:id/rate-limit", async (req, res, next) => {
-  try {
-    const data = await getApiKeyRateLimit({
-      projectId: req.apiKey.projectId,
-      apiKeyId: req.params.id
-    });
+    try {
+        const data = await getApiKeyRateLimit({
+            projectId: req.apiKey.projectId,
+            apiKeyId: req.params.id
+        });
 
-    if (!data) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: "API_KEY_NOT_FOUND",
-          message:
-            "The API key was not found in the authenticated project."
+        if (!data) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: "API_KEY_NOT_FOUND",
+                    message:
+                        "The API key was not found in the authenticated project."
+                }
+            });
         }
-      });
-    }
 
-    return res.status(200).json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_API_KEY_ID",
-          message: error.message
+        return res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_ID",
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    if (error.code === "RATE_LIMITER_UNAVAILABLE") {
-      return res.status(503).json({
-        success: false,
-        error: {
-          code: error.code,
-          message: error.message
+        if (error.code === "RATE_LIMITER_UNAVAILABLE") {
+            return res.status(503).json({
+                success: false,
+                error: {
+                    code: error.code,
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
+});
+
+// PATCH /api/v1/keys/:id/rate-limit
+// Update custom rate limits for an API key.
+router.patch("/:id/rate-limit", async (req, res, next) => {
+    try {
+        const { rateLimitMax, rateLimitWindowMs } = req.body ?? {};
+
+        const apiKey = await updateApiKeyRateLimit({
+            projectId: req.apiKey.projectId,
+            apiKeyId: req.params.id,
+            rateLimitMax,
+            rateLimitWindowMs
+        });
+
+        if (!apiKey) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: "API_KEY_NOT_FOUND",
+                    message: "API key not found."
+                }
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "API key rate limits updated successfully.",
+            data: {
+                apiKey
+            }
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_INPUT",
+                    message: error.message
+                }
+            });
+        }
+
+        next(error);
+    }
 });
 
 // POST /api/v1/keys/:id/rotate
 // Generate a replacement key and revoke the previous key.
 router.post("/:id/rotate", async (req, res, next) => {
-  try {
-    const result = await rotateApiKey({
-      projectId: req.apiKey.projectId,
-      apiKeyId: req.params.id
-    });
+    try {
+        const result = await rotateApiKey({
+            projectId: req.apiKey.projectId,
+            apiKeyId: req.params.id
+        });
 
-    if (!result) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: "API_KEY_NOT_FOUND",
-          message:
-            "The API key was not found or has already been revoked."
+        if (!result) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: "API_KEY_NOT_FOUND",
+                    message:
+                        "The API key was not found or has already been revoked."
+                }
+            });
         }
-      });
-    }
 
-    return res.status(200).json({
-      success: true,
-      message:
-        "API key rotated successfully. Save your new key securely.",
-      data: {
-        key: result.key,
-        apiKey: result.apiKey,
-        revokedApiKey: result.revokedApiKey
-      }
-    });
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_API_KEY_ID",
-          message: error.message
+        return res.status(200).json({
+            success: true,
+            message:
+                "API key rotated successfully. Save your new key securely.",
+            data: {
+                key: result.key,
+                apiKey: result.apiKey,
+                revokedApiKey: result.revokedApiKey
+            }
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_ID",
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    if (error.code === "API_KEY_EXPIRED") {
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: "API_KEY_EXPIRED",
-          message: error.message
+        if (error.code === "API_KEY_EXPIRED") {
+            return res.status(409).json({
+                success: false,
+                error: {
+                    code: "API_KEY_EXPIRED",
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
 });
 
 // DELETE /api/v1/keys/:id
 // Revoke a key only if it belongs to the authenticated project.
 router.delete("/:id", async (req, res, next) => {
-  try {
-    const revokedKey = await revokeApiKey({
-      projectId: req.apiKey.projectId,
-      apiKeyId: req.params.id
-    });
+    try {
+        const revokedKey = await revokeApiKey({
+            projectId: req.apiKey.projectId,
+            apiKeyId: req.params.id
+        });
 
-    if (!revokedKey) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: "API_KEY_NOT_FOUND",
-          message:
-            "The API key was not found or has already been revoked."
+        if (!revokedKey) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: "API_KEY_NOT_FOUND",
+                    message:
+                        "The API key was not found or has already been revoked."
+                }
+            });
         }
-      });
-    }
 
-    res.status(200).json({
-      success: true,
-      message: "API key revoked successfully.",
-      data: revokedKey
-    });
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_API_KEY_ID",
-          message: error.message
+        res.status(200).json({
+            success: true,
+            message: "API key revoked successfully.",
+            data: revokedKey
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_ID",
+                    message: error.message
+                }
+            });
         }
-      });
-    }
 
-    next(error);
-  }
+        next(error);
+    }
 });
 
 export default router;
-

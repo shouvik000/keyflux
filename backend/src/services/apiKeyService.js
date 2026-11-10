@@ -511,6 +511,68 @@ export async function getApiKeyRateLimit({
   };
 }
 
+
+// Update custom rate limits for an existing API key.
+export async function updateApiKeyRateLimit({
+  projectId,
+  apiKeyId,
+  rateLimitMax,
+  rateLimitWindowMs
+}) {
+      if (rateLimitMax === undefined || rateLimitMax === null) {
+    throw new TypeError("rateLimitMax is required.");
+  }
+
+  if (
+    rateLimitWindowMs === undefined ||
+    rateLimitWindowMs === null
+  ) {
+    throw new TypeError("rateLimitWindowMs is required.");
+  }
+  const validProjectId = validateId(projectId, "projectId");
+  const validApiKeyId = validateId(apiKeyId, "apiKeyId");
+
+  const validRateLimitMax = validateRateLimit(
+    rateLimitMax,
+    "rateLimitMax"
+  );
+
+  const validRateLimitWindowMs = validateRateLimit(
+    rateLimitWindowMs,
+    "rateLimitWindowMs"
+  );
+
+  const result = await pool.query(
+    `UPDATE api_keys
+     SET
+       rate_limit_max = $1,
+       rate_limit_window_ms = $2
+     WHERE id = $3
+       AND project_id = $4
+       AND revoked_at IS NULL
+     RETURNING
+       id,
+       project_id,
+       name,
+       key_prefix,
+       rate_limit_max,
+       rate_limit_window_ms,
+       expires_at,
+       last_used_at,
+       revoked_at,
+       created_at`,
+    [
+      validRateLimitMax,
+      validRateLimitWindowMs,
+      validApiKeyId,
+      validProjectId
+    ]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+
 // Rotate an API key while preserving its configuration.
 export async function rotateApiKey({ projectId, apiKeyId }) {
   const validProjectId = validateId(projectId, "projectId");

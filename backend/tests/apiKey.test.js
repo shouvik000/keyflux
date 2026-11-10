@@ -209,7 +209,6 @@ describe("API Key Management API", () => {
         }
     });
 
-
     it("should reject API key creation with an invalid name", async () => {
         const response = await request(app)
             .post("/api/v1/keys")
@@ -546,7 +545,7 @@ describe("API Key Management API", () => {
         assert.ok(Array.isArray(data.timeline));
     });
 
-        it("should return current rate-limit usage for an API key", async () => {
+    it("should return current rate-limit usage for an API key", async () => {
         const targetKey = await createApiKey({
             projectId,
             name: "Rate Limit Analytics Test",
@@ -660,6 +659,138 @@ describe("API Key Management API", () => {
         const response = await request(app)
             .get(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
             .set("x-api-key", otherProjectKey.key);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
+
+    it("should update custom rate limits for an API key", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Rate Limit Update Test"
+        });
+
+        const response = await request(app)
+            .patch(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+            .set("x-api-key", bootstrapKey)
+            .send({
+                rateLimitMax: 250,
+                rateLimitWindowMs: 120000
+            });
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        assert.equal(
+            response.body.data.apiKey.rate_limit_max,
+            250
+        );
+
+        assert.equal(
+            response.body.data.apiKey.rate_limit_window_ms,
+            120000
+        );
+    });
+
+    it("should reject invalid custom rate limit values", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Invalid Rate Limit Update Test"
+        });
+
+        const invalidValues = [0, -1, 1.5];
+
+        for (const value of invalidValues) {
+            const response = await request(app)
+                .patch(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+                .set("x-api-key", bootstrapKey)
+                .send({
+                    rateLimitMax: value,
+                    rateLimitWindowMs: 60000
+                });
+
+            assert.equal(response.status, 400);
+        }
+
+        for (const value of invalidValues) {
+            const response = await request(app)
+                .patch(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+                .set("x-api-key", bootstrapKey)
+                .send({
+                    rateLimitMax: 100,
+                    rateLimitWindowMs: value
+                });
+
+            assert.equal(response.status, 400);
+        }
+    });
+
+    it("should reject missing rate limit configuration fields", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Missing Rate Limit Fields Test"
+        });
+
+        const response = await request(app)
+            .patch(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+            .set("x-api-key", bootstrapKey)
+            .send({
+                rateLimitMax: 200
+            });
+
+        assert.equal(response.status, 400);
+    });
+
+    it("should return 404 when updating a nonexistent API key", async () => {
+        const response = await request(app)
+            .patch("/api/v1/keys/999999999/rate-limit")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                rateLimitMax: 200,
+                rateLimitWindowMs: 60000
+            });
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
+
+    it("should prevent rate-limit updates across projects", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Rate Limit Update Isolation Test"
+        });
+
+        const projectResponse = await request(app)
+            .post("/api/v1/projects")
+            .set("Authorization", `Bearer ${token}`)
+            .send({
+                name: "Rate Limit Update Isolation Project",
+                description: "Project isolation test."
+            });
+
+        assert.equal(projectResponse.status, 201);
+
+        const otherProjectId =
+            projectResponse.body.data.project.id;
+
+        const otherProjectKey = await createApiKey({
+            projectId: otherProjectId,
+            name: "Other Project Update Test"
+        });
+
+        const response = await request(app)
+            .patch(`/api/v1/keys/${targetKey.apiKey.id}/rate-limit`)
+            .set("x-api-key", otherProjectKey.key)
+            .send({
+                rateLimitMax: 200,
+                rateLimitWindowMs: 60000
+            });
 
         assert.equal(response.status, 404);
         assert.equal(
@@ -805,7 +936,6 @@ describe("API Key Management API", () => {
         assert.equal(replacementKey.rate_limit_max, 25);
         assert.equal(replacementKey.rate_limit_window_ms, 30000);
     });
-
 
     it("should successfully rotate an API key", async () => {
         const oldKey = await createApiKey({
