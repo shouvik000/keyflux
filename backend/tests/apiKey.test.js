@@ -114,6 +114,134 @@ describe("API Key Management API", () => {
         );
     });
 
+    it("should create an API key with default full-access scope", async () => {
+        const response = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Default Scope Test"
+            });
+
+        assert.equal(response.status, 201);
+        assert.deepEqual(
+            response.body.data.apiKey.scopes,
+            ["*"]
+        );
+    });
+
+    it("should update API key scopes successfully", async () => {
+        const createResponse = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Scope Update Test"
+            });
+
+        assert.equal(createResponse.status, 201);
+
+        const apiKeyId = createResponse.body.data.apiKey.id;
+
+        const updateResponse = await request(app)
+            .patch(`/api/v1/keys/${apiKeyId}/scopes`)
+            .set("x-api-key", bootstrapKey)
+            .send({
+                scopes: ["GET:/api/v1/protected"]
+            });
+
+        assert.equal(updateResponse.status, 200);
+        assert.deepEqual(
+            updateResponse.body.data.apiKey.scopes,
+            ["GET:/api/v1/protected"]
+        );
+    });
+
+    it("should allow authorized endpoints and reject unauthorized endpoints", async () => {
+        const createResponse = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Scope Enforcement Test"
+            });
+
+        assert.equal(createResponse.status, 201);
+
+        const restrictedKey = createResponse.body.data.key;
+        const apiKeyId = createResponse.body.data.apiKey.id;
+
+        const updateResponse = await request(app)
+            .patch(`/api/v1/keys/${apiKeyId}/scopes`)
+            .set("x-api-key", bootstrapKey)
+            .send({
+                scopes: ["GET:/api/v1/protected"]
+            });
+
+        assert.equal(updateResponse.status, 200);
+
+        const allowedResponse = await request(app)
+            .get("/api/v1/protected")
+            .set("x-api-key", restrictedKey);
+
+        assert.equal(allowedResponse.status, 200);
+
+        const deniedResponse = await request(app)
+            .get("/api/v1/keys")
+            .set("x-api-key", restrictedKey);
+
+        assert.equal(deniedResponse.status, 403);
+        assert.equal(
+            deniedResponse.body.error.code,
+            "INSUFFICIENT_API_KEY_SCOPE"
+        );
+    });
+
+    it("should reject invalid API key scopes", async () => {
+        const createResponse = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Invalid Scope Test"
+            });
+
+        assert.equal(createResponse.status, 201);
+
+        const apiKeyId = createResponse.body.data.apiKey.id;
+
+        const response = await request(app)
+            .patch(`/api/v1/keys/${apiKeyId}/scopes`)
+            .set("x-api-key", bootstrapKey)
+            .send({
+                scopes: ["INVALID:/api/v1/protected"]
+            });
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_API_KEY_INPUT"
+        );
+    });
+
+    it("should reject empty API key scopes", async () => {
+        const createResponse = await request(app)
+            .post("/api/v1/keys")
+            .set("x-api-key", bootstrapKey)
+            .send({
+                name: "Empty Scope Test"
+            });
+
+        assert.equal(createResponse.status, 201);
+
+        const apiKeyId = createResponse.body.data.apiKey.id;
+
+        const response = await request(app)
+            .patch(`/api/v1/keys/${apiKeyId}/scopes`)
+            .set("x-api-key", bootstrapKey)
+            .send({
+                scopes: []
+            });
+
+        assert.equal(response.status, 400);
+    });
+
     it("should create an API key with custom rate limits", async () => {
         const response = await request(app)
             .post("/api/v1/keys")
@@ -921,7 +1049,8 @@ describe("API Key Management API", () => {
             projectId,
             name: "Custom Rate Limit Rotation Test",
             rateLimitMax: 25,
-            rateLimitWindowMs: 30000
+            rateLimitWindowMs: 30000,
+            scopes: ["GET:/api/v1/protected"]
         });
 
         const response = await request(app)
@@ -935,6 +1064,11 @@ describe("API Key Management API", () => {
 
         assert.equal(replacementKey.rate_limit_max, 25);
         assert.equal(replacementKey.rate_limit_window_ms, 30000);
+
+        assert.deepEqual(
+            replacementKey.scopes,
+            ["GET:/api/v1/protected"]
+        );
     });
 
     it("should successfully rotate an API key", async () => {
@@ -1047,6 +1181,45 @@ describe("API Key Management API", () => {
         const response = await request(app)
             .post(`/api/v1/keys/${targetKey.apiKey.id}/rotate`)
             .set("x-api-key", otherProjectKey.key);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "API_KEY_NOT_FOUND"
+        );
+    });
+
+    // Scope updates must respect project isolation.
+    it("should prevent updating API key scopes across projects", async () => {
+        const targetKey = await createApiKey({
+            projectId,
+            name: "Scope Isolation Target Key"
+        });
+
+        const projectResponse = await request(app)
+            .post("/api/v1/projects")
+            .set("Authorization", `Bearer ${token}`)
+            .send({
+                name: "Scope Isolation Test Project",
+                description: "Temporary project for scope isolation testing."
+            });
+
+        assert.equal(projectResponse.status, 201);
+
+        const otherProjectId =
+            projectResponse.body.data.project.id;
+
+        const otherProjectKey = await createApiKey({
+            projectId: otherProjectId,
+            name: "Other Project Scope Key"
+        });
+
+        const response = await request(app)
+            .patch(`/api/v1/keys/${targetKey.apiKey.id}/scopes`)
+            .set("x-api-key", otherProjectKey.key)
+            .send({
+                scopes: ["GET:/api/v1/protected"]
+            });
 
         assert.equal(response.status, 404);
         assert.equal(

@@ -39,7 +39,8 @@ export async function apiKeyAuth(req, res, next) {
          id,
          project_id,
          rate_limit_max,
-         rate_limit_window_ms`,
+         rate_limit_window_ms,
+         scopes`,
       [keyHash]
     );
 
@@ -103,8 +104,26 @@ export async function apiKeyAuth(req, res, next) {
       id: key.id,
       projectId: key.project_id,
       rateLimitMax: key.rate_limit_max,
-      rateLimitWindowMs: key.rate_limit_window_ms
+      rateLimitWindowMs: key.rate_limit_window_ms,
+      scopes: key.scopes
     };
+
+    // Check whether this API key has permission to access the requested endpoint.
+    const requestPath = req.originalUrl.split("?")[0];
+    const requiredScope = `${req.method}:${requestPath}`;
+
+    if (
+      !key.scopes.includes("*") &&
+      !key.scopes.includes(requiredScope)
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: "INSUFFICIENT_API_KEY_SCOPE",
+          message: "This API key does not have permission to access this endpoint."
+        }
+      });
+    }
 
     return next();
   } catch (error) {

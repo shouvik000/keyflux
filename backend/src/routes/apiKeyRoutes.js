@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
@@ -13,7 +12,8 @@ import {
     rotateApiKey,
     getApiKeyInsights,
     getApiKeyRateLimit,
-    updateApiKeyRateLimit
+    updateApiKeyRateLimit,
+    updateApiKeyScopes
 } from "../services/apiKeyService.js";
 
 const router = Router();
@@ -48,6 +48,15 @@ const router = Router();
  *           default: 60000
  *           example: 60000
  *           description: Rate-limit window duration in milliseconds.
+ *         scopes:
+ *           type: array
+ *           items:
+ *             type: string
+ *           default: ["*"]
+ *           example:
+ *             - GET:/api/v1/protected
+ *             - POST:/api/v1/protected
+ *           description: Permissions granted to this API key.
  *
  *     ApiKey:
  *       type: object
@@ -70,6 +79,12 @@ const router = Router();
  *         rate_limit_window_ms:
  *           type: integer
  *           example: 60000
+ *         scopes:
+ *           type: array
+ *           items:
+ *             type: string
+ *           example:
+ *             - GET:/api/v1/protected
  *         last_used_at:
  *           type: string
  *           format: date-time
@@ -141,7 +156,7 @@ const router = Router();
  *
  *   post:
  *     summary: Create an API key
- *     description: Creates a new API key with optional expiration and custom rate limits. The full key is returned only once.
+ *     description: Creates a new API key with optional expiration, custom rate limits, and permission scopes. The full key is returned only once.
  *     tags: [API Keys]
  *     security:
  *       - ApiKeyAuth: []
@@ -343,7 +358,8 @@ router.post("/", async (req, res, next) => {
             name,
             expiresAt = null,
             rateLimitMax = 100,
-            rateLimitWindowMs = 60000
+            rateLimitWindowMs = 60000,
+            scopes = ["*"]
         } = req.body ?? {};
 
         const result = await createApiKey({
@@ -351,7 +367,8 @@ router.post("/", async (req, res, next) => {
             name,
             expiresAt,
             rateLimitMax,
-            rateLimitWindowMs
+            rateLimitWindowMs,
+            scopes
         });
 
         res.status(201).json({
@@ -538,6 +555,101 @@ router.patch("/:id/rate-limit", async (req, res, next) => {
         return res.status(200).json({
             success: true,
             message: "API key rate limits updated successfully.",
+            data: {
+                apiKey
+            }
+        });
+    } catch (error) {
+        if (error instanceof TypeError) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: "INVALID_API_KEY_INPUT",
+                    message: error.message
+                }
+            });
+        }
+
+        next(error);
+    }
+});
+
+/**
+ * @swagger
+ * /api/v1/keys/{id}/scopes:
+ *   patch:
+ *     summary: Update API key permissions
+ *     description: Updates the permission scopes assigned to a specific API key belonging to the authenticated project.
+ *     tags: [API Keys]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: ID of the API key.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - scopes
+ *             properties:
+ *               scopes:
+ *                 type: array
+ *                 minItems: 1
+ *                 maxItems: 50
+ *                 uniqueItems: true
+ *                 items:
+ *                   type: string
+ *                 example:
+ *                   - GET:/api/v1/protected
+ *                   - POST:/api/v1/protected
+ *                 description: Permission scopes. Use "*" to grant unrestricted access.
+ *     responses:
+ *       200:
+ *         description: API key scopes updated successfully.
+ *       400:
+ *         description: Invalid API key ID or scopes.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       404:
+ *         description: API key not found in the authenticated project.
+ *       500:
+ *         description: Internal server error.
+ */
+
+// PATCH /api/v1/keys/:id/scopes
+// Update permission scopes for an API key.
+router.patch("/:id/scopes", async (req, res, next) => {
+    try {
+        const { scopes } = req.body ?? {};
+
+        const apiKey = await updateApiKeyScopes({
+            projectId: req.apiKey.projectId,
+            apiKeyId: req.params.id,
+            scopes
+        });
+
+        if (!apiKey) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: "API_KEY_NOT_FOUND",
+                    message:
+                        "The API key was not found in the authenticated project."
+                }
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "API key scopes updated successfully.",
             data: {
                 apiKey
             }

@@ -61,13 +61,78 @@ function validateRateLimit(value, fieldName, defaultValue) {
   return number;
 }
 
-// Create a new API key.
+// Validate API key scopes.
+function validateScopes(scopes = ["*"]) {
+  if (!Array.isArray(scopes) || scopes.length === 0) {
+    throw new TypeError("scopes must be a non-empty array.");
+  }
+
+  if (scopes.length > 50) {
+    throw new TypeError("A maximum of 50 scopes is allowed.");
+  }
+
+  const validMethods = [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "HEAD",
+    "OPTIONS"
+  ];
+
+  const cleanScopes = scopes.map((scope) => {
+    if (typeof scope !== "string" || !scope.trim()) {
+      throw new TypeError("Each scope must be a non-empty string.");
+    }
+
+    const cleanScope = scope.trim();
+
+    if (cleanScope === "*") {
+      return cleanScope;
+    }
+
+    const match = cleanScope.match(
+      /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS):\/[A-Za-z0-9/_:-]*$/
+    );
+
+    if (!match || !validMethods.includes(match[1])) {
+      throw new TypeError(
+        `Invalid scope: ${cleanScope}. Use METHOD:/path or *.`
+      );
+    }
+
+    return cleanScope;
+  });
+
+  if (
+    cleanScopes.includes("*") &&
+    cleanScopes.length !== 1
+  ) {
+    throw new TypeError(
+      'The "*" scope cannot be combined with other scopes.'
+    );
+  }
+
+  if (new Set(cleanScopes).size !== cleanScopes.length) {
+    throw new TypeError("Duplicate scopes are not allowed.");
+  }
+
+  return cleanScopes;
+}
+
+
+// ============================================
+// CREATE API KEY
+// ============================================
+
 export async function createApiKey({
   projectId,
   name,
   expiresAt = null,
   rateLimitMax = 100,
-  rateLimitWindowMs = 60000
+  rateLimitWindowMs = 60000,
+  scopes = ["*"]
 }) {
   const validProjectId = validateId(projectId, "projectId");
   const validName = validateName(name);
@@ -85,6 +150,8 @@ export async function createApiKey({
     60000
   );
 
+  const validScopes = validateScopes(scopes);
+
   const generated = generateApiKey();
 
   const result = await pool.query(
@@ -96,9 +163,10 @@ export async function createApiKey({
          key_hash,
          expires_at,
          rate_limit_max,
-         rate_limit_window_ms
+         rate_limit_window_ms,
+         scopes
        )
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING
        id,
        project_id,
@@ -107,6 +175,7 @@ export async function createApiKey({
        expires_at,
        rate_limit_max,
        rate_limit_window_ms,
+       scopes,
        created_at`,
     [
       validProjectId,
@@ -115,7 +184,8 @@ export async function createApiKey({
       generated.keyHash,
       validExpiration,
       validRateLimitMax,
-      validRateLimitWindowMs
+      validRateLimitWindowMs,
+      validScopes
     ]
   );
 
@@ -125,7 +195,11 @@ export async function createApiKey({
   };
 }
 
-// List API keys belonging to a project.
+
+// ============================================
+// LIST API KEYS
+// ============================================
+
 export async function listApiKeys({
   projectId,
   status = "all",
@@ -171,6 +245,7 @@ export async function listApiKeys({
        key_prefix,
        rate_limit_max,
        rate_limit_window_ms,
+       scopes,
        last_used_at,
        expires_at,
        revoked_at,
@@ -209,7 +284,11 @@ export async function listApiKeys({
   return result.rows;
 }
 
-// Get API key usage insights.
+
+// ============================================
+// GET API KEY USAGE INSIGHTS
+// ============================================
+
 export async function getApiKeyInsights({
   projectId,
   recentWithinDays = 7,
@@ -305,7 +384,11 @@ export async function getApiKeyInsights({
   return result.rows[0];
 }
 
-// Revoke an API key.
+
+// ============================================
+// REVOKE API KEY
+// ============================================
+
 export async function revokeApiKey({ projectId, apiKeyId }) {
   const validProjectId = validateId(projectId, "projectId");
   const validApiKeyId = validateId(apiKeyId, "apiKeyId");
@@ -323,7 +406,11 @@ export async function revokeApiKey({ projectId, apiKeyId }) {
   return result.rows[0] ?? null;
 }
 
-// Get usage statistics for an individual API key.
+
+// ============================================
+// GET API KEY USAGE
+// ============================================
+
 export async function getApiKeyUsage({
   projectId,
   apiKeyId,
@@ -426,8 +513,10 @@ export async function getApiKeyUsage({
 }
 
 
+// ============================================
+// GET API KEY RATE LIMIT
+// ============================================
 
-// Get current rate-limit usage for an individual API key.
 export async function getApiKeyRateLimit({
   projectId,
   apiKeyId
@@ -512,14 +601,17 @@ export async function getApiKeyRateLimit({
 }
 
 
-// Update custom rate limits for an existing API key.
+// ============================================
+// UPDATE API KEY RATE LIMIT
+// ============================================
+
 export async function updateApiKeyRateLimit({
   projectId,
   apiKeyId,
   rateLimitMax,
   rateLimitWindowMs
 }) {
-      if (rateLimitMax === undefined || rateLimitMax === null) {
+  if (rateLimitMax === undefined || rateLimitMax === null) {
     throw new TypeError("rateLimitMax is required.");
   }
 
@@ -529,6 +621,7 @@ export async function updateApiKeyRateLimit({
   ) {
     throw new TypeError("rateLimitWindowMs is required.");
   }
+
   const validProjectId = validateId(projectId, "projectId");
   const validApiKeyId = validateId(apiKeyId, "apiKeyId");
 
@@ -572,8 +665,56 @@ export async function updateApiKeyRateLimit({
   return result.rows[0] ?? null;
 }
 
+// ============================================
+// UPDATE API KEY SCOPES
+// ============================================
 
-// Rotate an API key while preserving its configuration.
+export async function updateApiKeyScopes({
+  projectId,
+  apiKeyId,
+  scopes
+}) {
+  if (scopes === undefined || scopes === null) {
+    throw new TypeError("scopes is required.");
+  }
+
+  const validProjectId = validateId(projectId, "projectId");
+  const validApiKeyId = validateId(apiKeyId, "apiKeyId");
+  const validScopes = validateScopes(scopes);
+
+  const result = await pool.query(
+    `UPDATE api_keys
+     SET scopes = $1
+     WHERE id = $2
+       AND project_id = $3
+       AND revoked_at IS NULL
+     RETURNING
+       id,
+       project_id,
+       name,
+       key_prefix,
+       scopes,
+       rate_limit_max,
+       rate_limit_window_ms,
+       expires_at,
+       last_used_at,
+       revoked_at,
+       created_at`,
+    [
+      validScopes,
+      validApiKeyId,
+      validProjectId
+    ]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+
+// ============================================
+// ROTATE API KEY
+// ============================================
+
 export async function rotateApiKey({ projectId, apiKeyId }) {
   const validProjectId = validateId(projectId, "projectId");
   const validApiKeyId = validateId(apiKeyId, "apiKeyId");
@@ -592,7 +733,8 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
          expires_at,
          revoked_at,
          rate_limit_max,
-         rate_limit_window_ms
+         rate_limit_window_ms,
+         scopes
        FROM api_keys
        WHERE id = $1
          AND project_id = $2
@@ -621,7 +763,7 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
 
     const generated = generateApiKey();
 
-    // Preserve expiration and custom rate-limit settings.
+    // Preserve expiration, rate limits, and scopes.
     const newKeyResult = await client.query(
       `INSERT INTO api_keys
          (
@@ -631,9 +773,10 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
            key_hash,
            expires_at,
            rate_limit_max,
-           rate_limit_window_ms
+           rate_limit_window_ms,
+           scopes
          )
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING
          id,
          project_id,
@@ -642,6 +785,7 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
          expires_at,
          rate_limit_max,
          rate_limit_window_ms,
+         scopes,
          created_at`,
       [
         validProjectId,
@@ -650,7 +794,8 @@ export async function rotateApiKey({ projectId, apiKeyId }) {
         generated.keyHash,
         oldKey.expires_at,
         oldKey.rate_limit_max,
-        oldKey.rate_limit_window_ms
+        oldKey.rate_limit_window_ms,
+        oldKey.scopes
       ]
     );
 
