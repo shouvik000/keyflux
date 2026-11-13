@@ -8,7 +8,8 @@ import {
   getAnalyticsOverview,
   getAnalyticsEndpoints,
   getAnalyticsTimeline,
-  getAnalyticsLogs
+  getAnalyticsLogs,
+  getAnalyticsPerformance
 } from "../services/analyticsService.js";
 
 const router = Router();
@@ -141,6 +142,54 @@ const router = Router();
  *         created_at:
  *           type: string
  *           format: date-time
+ *
+ *     PerformanceEndpoint:
+ *       type: object
+ *       properties:
+ *         request_path:
+ *           type: string
+ *           example: /api/v1/protected
+ *         http_method:
+ *           type: string
+ *           example: GET
+ *         total_requests:
+ *           type: integer
+ *           example: 100
+ *         average_response_time_ms:
+ *           type: number
+ *           example: 45.25
+ *         p50_response_time_ms:
+ *           type: number
+ *           example: 40
+ *         p95_response_time_ms:
+ *           type: number
+ *           example: 85
+ *         p99_response_time_ms:
+ *           type: number
+ *           example: 95
+ *
+ *     AnalyticsPerformance:
+ *       type: object
+ *       properties:
+ *         total_requests:
+ *           type: integer
+ *           example: 500
+ *         average_response_time_ms:
+ *           type: number
+ *           example: 45.25
+ *         p50_response_time_ms:
+ *           type: number
+ *           example: 40
+ *         p95_response_time_ms:
+ *           type: number
+ *           example: 85
+ *         p99_response_time_ms:
+ *           type: number
+ *           example: 95
+ *         slowest_endpoints:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/PerformanceEndpoint'
  *
  *     AnalyticsPagination:
  *       type: object
@@ -290,6 +339,48 @@ const router = Router();
  *                   type: array
  *                   items:
  *                     $ref: '#/components/schemas/TimelineAnalytics'
+ *       400:
+ *         description: Invalid days parameter.
+ *       401:
+ *         description: API key missing, invalid, revoked, or expired.
+ *       429:
+ *         description: API rate limit exceeded.
+ *       500:
+ *         description: Internal server error.
+ *       503:
+ *         description: Rate limiting service unavailable.
+ *
+ * /api/v1/analytics/performance:
+ *   get:
+ *     summary: Get API response-time performance analytics
+ *     description: Returns average, P50, P95, and P99 response times, along with the 20 slowest endpoints ranked by P95 latency.
+ *     tags: [Analytics]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: days
+ *         schema:
+ *           type: integer
+ *           enum: [7, 30, 90]
+ *           default: 7
+ *         description: Number of previous days to include.
+ *     responses:
+ *       200:
+ *         description: Performance analytics retrieved successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 periodDays:
+ *                   type: integer
+ *                   example: 7
+ *                 data:
+ *                   $ref: '#/components/schemas/AnalyticsPerformance'
  *       400:
  *         description: Invalid days parameter.
  *       401:
@@ -579,4 +670,20 @@ router.get(
   }
 );
 
+router.get("/performance", validateDays, async (req, res, next) => {
+  try {
+    const data = await getAnalyticsPerformance(
+      req.apiKey.projectId,
+      req.analyticsDays
+    );
+
+    res.status(200).json({
+      success: true,
+      periodDays: req.analyticsDays,
+      data
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 export default router;

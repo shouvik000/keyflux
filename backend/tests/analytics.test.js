@@ -202,6 +202,57 @@ describe("Analytics API Integration Tests", () => {
         }
     });
 
+
+
+    // 3. Response-time performance analytics.
+    it("should return correct response-time percentiles and slowest endpoints", async () => {
+        const response = await request(app)
+            .get("/api/v1/analytics/performance?days=7")
+            .set("x-api-key", apiKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+        assert.equal(response.body.periodDays, 7);
+
+        const data = response.body.data;
+
+        assert.ok(data.total_requests >= 5);
+
+        assert.equal(
+    typeof data.average_response_time_ms,
+    "number"
+    );
+
+      assert.ok(data.p50_response_time_ms <= data.p95_response_time_ms);
+      assert.ok(data.p95_response_time_ms <= data.p99_response_time_ms);
+
+        assert.ok(Array.isArray(data.slowest_endpoints));
+        assert.ok(data.slowest_endpoints.length > 0);
+        assert.ok(data.slowest_endpoints.length <= 20);
+
+        const ordersEndpoint = data.slowest_endpoints.find(
+            (endpoint) =>
+                endpoint.request_path === `${testPath}/orders` &&
+                endpoint.http_method === "POST"
+        );
+
+        assert.ok(ordersEndpoint);
+        assert.equal(ordersEndpoint.total_requests, 3);
+        assert.equal(
+            Number(ordersEndpoint.p50_response_time_ms),
+            35
+        );
+        assert.equal(
+            Number(ordersEndpoint.p95_response_time_ms),
+            44
+        );
+        assert.equal(
+            Number(ordersEndpoint.p99_response_time_ms),
+            44.8
+        );
+    });
+
+
     // 3. Top endpoints.
     it("should return endpoint analytics with correct request counts", async () => {
         const response = await request(app)
@@ -354,6 +405,30 @@ describe("Analytics API Integration Tests", () => {
                 testCase.code
             );
         }
+    });
+
+
+    // 8. Performance analytics project isolation.
+    it("should only return performance analytics for the authenticated project", async () => {
+        const response = await request(app)
+            .get("/api/v1/analytics/performance?days=7")
+            .set("x-api-key", secondProjectApiKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        const data = response.body.data;
+
+        assert.equal(data.total_requests, 1);
+        assert.equal(data.p50_response_time_ms, 15);
+        assert.equal(data.p95_response_time_ms, 15);
+        assert.equal(data.p99_response_time_ms, 15);
+
+        assert.equal(data.slowest_endpoints.length, 1);
+        assert.equal(
+            data.slowest_endpoints[0].request_path,
+            `/analytics-isolation/${marker}`
+        );
     });
 
     // 8. Project-level data isolation.

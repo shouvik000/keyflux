@@ -204,3 +204,131 @@ export async function getAnalyticsLogs(
     }
   };
 }
+
+export async function getAnalyticsPerformance(projectId, days) {
+  const summaryResult = await pool.query(
+    `SELECT
+       COUNT(*)::int AS total_requests,
+
+       COALESCE(
+         ROUND(AVG(response_time_ms)::numeric, 2),
+         0
+       ) AS average_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           PERCENTILE_CONT(0.50)
+           WITHIN GROUP (ORDER BY response_time_ms)::numeric,
+           2
+         ),
+         0
+       ) AS p50_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           PERCENTILE_CONT(0.95)
+           WITHIN GROUP (ORDER BY response_time_ms)::numeric,
+           2
+         ),
+         0
+       ) AS p95_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           PERCENTILE_CONT(0.99)
+           WITHIN GROUP (ORDER BY response_time_ms)::numeric,
+           2
+         ),
+         0
+       ) AS p99_response_time_ms
+
+     FROM api_usage_logs
+     WHERE project_id = $1
+       AND created_at >= NOW() - ($2::int * INTERVAL '1 day')`,
+    [projectId, days]
+  );
+
+  const endpointsResult = await pool.query(
+    `SELECT
+       request_path,
+       http_method,
+       COUNT(*)::int AS total_requests,
+
+       COALESCE(
+         ROUND(AVG(response_time_ms)::numeric, 2),
+         0
+       ) AS average_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           PERCENTILE_CONT(0.50)
+           WITHIN GROUP (ORDER BY response_time_ms)::numeric,
+           2
+         ),
+         0
+       ) AS p50_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           PERCENTILE_CONT(0.95)
+           WITHIN GROUP (ORDER BY response_time_ms)::numeric,
+           2
+         ),
+         0
+       ) AS p95_response_time_ms,
+
+       COALESCE(
+         ROUND(
+           PERCENTILE_CONT(0.99)
+           WITHIN GROUP (ORDER BY response_time_ms)::numeric,
+           2
+         ),
+         0
+       ) AS p99_response_time_ms
+
+     FROM api_usage_logs
+     WHERE project_id = $1
+       AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+
+     GROUP BY request_path, http_method
+
+     ORDER BY p95_response_time_ms DESC,
+              total_requests DESC
+
+     LIMIT 20`,
+    [projectId, days]
+  );
+
+  const summary = summaryResult.rows[0];
+
+  return {
+    total_requests: summary.total_requests,
+    average_response_time_ms: Number(
+      summary.average_response_time_ms
+    ),
+    p50_response_time_ms: Number(
+      summary.p50_response_time_ms
+    ),
+    p95_response_time_ms: Number(
+      summary.p95_response_time_ms
+    ),
+    p99_response_time_ms: Number(
+      summary.p99_response_time_ms
+    ),
+    slowest_endpoints: endpointsResult.rows.map((endpoint) => ({
+      ...endpoint,
+      average_response_time_ms: Number(
+        endpoint.average_response_time_ms
+      ),
+      p50_response_time_ms: Number(
+        endpoint.p50_response_time_ms
+      ),
+      p95_response_time_ms: Number(
+        endpoint.p95_response_time_ms
+      ),
+      p99_response_time_ms: Number(
+        endpoint.p99_response_time_ms
+      )
+    }))
+  };
+}
