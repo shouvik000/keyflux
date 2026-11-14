@@ -1,10 +1,16 @@
 
 import redisClient from "../config/redis.js";
 
+import { createRateLimitAlert } from "../services/alertService.js";
+
+import {
+  shouldCreateRateLimitAlert,
+  releaseRateLimitAlertReservation
+} from "../services/alertDeduplicationService.js";
+
 const DEFAULT_MAX_REQUESTS = 100;
 const DEFAULT_WINDOW_MS = 60_000;
 
-// Atomically increment the counter and set its expiration.
 const RATE_LIMIT_SCRIPT = `
   local count = redis.call("INCR", KEYS[1])
 
@@ -16,6 +22,60 @@ const RATE_LIMIT_SCRIPT = `
 
   return { count, ttl }
 `;
+
+async function recordRateLimitAlert({
+  req,
+  alertType,
+  requestCount,
+  keyMaxRequests,
+  keyWindowMs,
+  windowNumber,
+  ttlMs
+}) {
+  const apiKeyId = req.apiKey.id;
+
+  const reservation = {
+    apiKeyId,
+    alertType,
+    windowMs: keyWindowMs,
+    windowNumber
+  };
+
+  let reserved = false;
+
+  try {
+    reserved = await shouldCreateRateLimitAlert({
+      ...reservation,
+      ttlMs
+    });
+
+    if (!reserved) {
+      return;
+    }
+
+    await createRateLimitAlert({
+      projectId: req.apiKey.projectId,
+      apiKeyId,
+      alertType,
+      usageCount: requestCount,
+      rateLimit: keyMaxRequests,
+      windowMs: keyWindowMs
+    });
+  } catch (error) {
+    if (reserved) {
+      try {
+        await releaseRateLimitAlertReservation(reservation);
+      } catch (releaseError) {
+        console.error(
+          "Failed to release alert reservation:",
+          releaseError.message
+        );
+      }
+    }
+
+    console.error("Failed to record rate-limit alert:", error.message);
+  }
+}
 
 export function createApiRateLimit({
   maxRequests = Number(
@@ -35,7 +95,6 @@ export function createApiRateLimit({
 
   return async function apiRateLimit(req, res, next) {
     try {
-      // Authentication middleware must run first.
       const apiKeyId = req.apiKey?.id;
 
       if (!apiKeyId) {
@@ -48,7 +107,6 @@ export function createApiRateLimit({
         });
       }
 
-      // Use the authenticated API key's individual settings.
       const keyMaxRequests = req.apiKey.rateLimitMax ?? maxRequests;
       const keyWindowMs = req.apiKey.rateLimitWindowMs ?? windowMs;
 
@@ -76,7 +134,6 @@ export function createApiRateLimit({
       const windowEnd = (windowNumber + 1) * keyWindowMs;
       const ttlMs = Math.max(1, windowEnd - now);
 
-      // Separate counters by API key and window size.
       const redisKey =
         `keyflux:rate-limit:${apiKeyId}:${keyWindowMs}:${windowNumber}`;
 
@@ -93,7 +150,36 @@ export function createApiRateLimit({
       res.set("RateLimit-Remaining", String(remaining));
       res.set("RateLimit-Reset", String(resetAt));
 
+      // Record one warning when usage reaches 80%.
+      const warningThreshold = Math.ceil(keyMaxRequests * 0.8);
+
+      if (
+        requestCount >= warningThreshold &&
+        requestCount <= keyMaxRequests
+      ) {
+        await recordRateLimitAlert({
+          req,
+          alertType: "RATE_LIMIT_WARNING",
+          requestCount,
+          keyMaxRequests,
+          keyWindowMs,
+          windowNumber,
+          ttlMs
+        });
+      }
+
       if (requestCount > keyMaxRequests) {
+        // Record one exceeded alert per API key and window.
+        await recordRateLimitAlert({
+          req,
+          alertType: "RATE_LIMIT_EXCEEDED",
+          requestCount,
+          keyMaxRequests,
+          keyWindowMs,
+          windowNumber,
+          ttlMs
+        });
+
         const retryAfter = Math.max(
           1,
           Math.ceil((windowEnd - Date.now()) / 1000)
