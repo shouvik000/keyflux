@@ -19,6 +19,7 @@ describe("API Usage Alerts", () => {
     let projectId;
     let apiKey;
     let apiKeyId;
+    let managementApiKey;
     let rateLimitRedisKey;
     let windowNumber;
 
@@ -65,6 +66,15 @@ describe("API Usage Alerts", () => {
         apiKey = created.key;
         apiKeyId = created.apiKey.id;
 
+        const managementKey = await createApiKey({
+            projectId,
+            name: "Alert Management Test Key",
+            rateLimitMax: 100,
+            rateLimitWindowMs
+        });
+
+        managementApiKey = managementKey.key;
+
         windowNumber = Math.floor(Date.now() / rateLimitWindowMs);
 
         const windowEnd = (windowNumber + 1) * rateLimitWindowMs;
@@ -72,7 +82,6 @@ describe("API Usage Alerts", () => {
         rateLimitRedisKey =
             `keyflux:rate-limit:${apiKeyId}:${rateLimitWindowMs}:${windowNumber}`;
 
-        // Start at 3 requests. The next request reaches 80%.
         await redisClient.set(rateLimitRedisKey, "3", {
             PX: Math.max(1, windowEnd - Date.now())
         });
@@ -84,13 +93,15 @@ describe("API Usage Alerts", () => {
                 await redisClient.del(rateLimitRedisKey);
             }
 
-            await redisClient.del(
-                `keyflux:alert:${apiKeyId}:${rateLimitWindowMs}:RATE_LIMIT_WARNING:${windowNumber}`
-            );
+            if (apiKeyId && windowNumber !== undefined) {
+                await redisClient.del(
+                    `keyflux:alert:${apiKeyId}:${rateLimitWindowMs}:RATE_LIMIT_WARNING:${windowNumber}`
+                );
 
-            await redisClient.del(
-                `keyflux:alert:${apiKeyId}:${rateLimitWindowMs}:RATE_LIMIT_EXCEEDED:${windowNumber}`
-            );
+                await redisClient.del(
+                    `keyflux:alert:${apiKeyId}:${rateLimitWindowMs}:RATE_LIMIT_EXCEEDED:${windowNumber}`
+                );
+            }
 
             await pool.query(
                 "DELETE FROM users WHERE email = $1",
@@ -103,22 +114,20 @@ describe("API Usage Alerts", () => {
         }
     });
 
+    // Test 1: Alert creation and deduplication.
     it("should create one warning and one exceeded alert per rate-limit window", async () => {
-        // Request 4 of 5: reaches 80%.
         const warningResponse = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", apiKey);
 
         assert.equal(warningResponse.status, 200);
 
-        // Request 5 of 5: warning must not be duplicated.
         const secondWarningResponse = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", apiKey);
 
         assert.equal(secondWarningResponse.status, 200);
 
-        // Request 6 of 5: must retain the existing 429 response.
         const exceededResponse = await request(app)
             .get("/api/v1/protected")
             .set("x-api-key", apiKey);
@@ -130,7 +139,6 @@ describe("API Usage Alerts", () => {
             "RATE_LIMIT_EXCEEDED"
         );
 
-        // Verify alerts stored in PostgreSQL.
         const alerts = await pool.query(
             `SELECT
                 alert_type,
@@ -165,5 +173,126 @@ describe("API Usage Alerts", () => {
 
         assert.equal(Number(warning.window_ms), rateLimitWindowMs);
         assert.equal(Number(exceeded.window_ms), rateLimitWindowMs);
+    });
+
+    // Test 2: List alerts with pagination.
+    it("should list project alerts with pagination", async () => {
+        const response = await request(app)
+            .get("/api/v1/alerts?page=1&limit=10")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+        assert.ok(Array.isArray(response.body.data.alerts));
+        assert.ok(response.body.data.alerts.length >= 2);
+        assert.equal(response.body.data.pagination.page, 1);
+        assert.equal(response.body.data.pagination.limit, 10);
+        assert.ok(response.body.data.pagination.total >= 2);
+    });
+
+    // Test 3: Filter alerts by type.
+    it("should filter alerts by alert type", async () => {
+        const response = await request(app)
+            .get("/api/v1/alerts?alertType=RATE_LIMIT_WARNING")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(response.status, 200);
+        assert.ok(response.body.data.alerts.length >= 1);
+
+        assert.ok(
+            response.body.data.alerts.every(
+                alert => alert.alert_type === "RATE_LIMIT_WARNING"
+            )
+        );
+    });
+
+    // Test 4: Reject invalid alert type.
+    it("should reject an invalid alert type", async () => {
+        const response = await request(app)
+            .get("/api/v1/alerts?alertType=INVALID")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_ALERT_TYPE"
+        );
+    });
+
+    // Test 5: Reject invalid pagination.
+    it("should reject invalid pagination parameters", async () => {
+        const invalidPage = await request(app)
+            .get("/api/v1/alerts?page=0")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(invalidPage.status, 400);
+        assert.equal(
+            invalidPage.body.error.code,
+            "INVALID_PAGE"
+        );
+
+        const invalidLimit = await request(app)
+            .get("/api/v1/alerts?limit=101")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(invalidLimit.status, 400);
+        assert.equal(
+            invalidLimit.body.error.code,
+            "INVALID_LIMIT"
+        );
+    });
+
+    // Test 6: Retrieve an individual alert.
+    it("should retrieve an individual alert", async () => {
+        const listResponse = await request(app)
+            .get("/api/v1/alerts")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(listResponse.status, 200);
+
+        const alertId = listResponse.body.data.alerts[0].id;
+
+        const response = await request(app)
+            .get(`/api/v1/alerts/${alertId}`)
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        assert.equal(
+            String(response.body.data.id),
+            String(alertId)
+        );
+
+        assert.equal(
+            Number(response.body.data.project_id),
+            Number(projectId)
+        );
+    });
+
+    // Test 7: Reject invalid alert ID.
+    it("should reject an invalid alert ID", async () => {
+        const response = await request(app)
+            .get("/api/v1/alerts/invalid")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_ALERT_ID"
+        );
+    });
+
+    // Test 8: Return 404 for nonexistent alert.
+    it("should return 404 for a nonexistent alert", async () => {
+        const response = await request(app)
+            .get("/api/v1/alerts/999999999")
+            .set("x-api-key", managementApiKey);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "ALERT_NOT_FOUND"
+        );
     });
 });

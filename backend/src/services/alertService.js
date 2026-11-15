@@ -1,6 +1,11 @@
 
 import pool from "../config/database.js";
 
+const ALLOWED_ALERT_TYPES = [
+  "RATE_LIMIT_WARNING",
+  "RATE_LIMIT_EXCEEDED"
+];
+
 export async function createRateLimitAlert({
   projectId,
   apiKeyId,
@@ -9,12 +14,7 @@ export async function createRateLimitAlert({
   rateLimit,
   windowMs
 }) {
-  const allowedAlertTypes = [
-    "RATE_LIMIT_WARNING",
-    "RATE_LIMIT_EXCEEDED"
-  ];
-
-  if (!allowedAlertTypes.includes(alertType)) {
+  if (!ALLOWED_ALERT_TYPES.includes(alertType)) {
     throw new TypeError("Invalid rate-limit alert type.");
   }
 
@@ -70,7 +70,7 @@ export async function createRateLimitAlert({
   return result.rows[0];
 }
 
-export async function getProjectAlerts(projectId, limit = 50) {
+function validateProjectId(projectId) {
   if (
     !Number.isSafeInteger(Number(projectId)) ||
     Number(projectId) < 1
@@ -78,8 +78,103 @@ export async function getProjectAlerts(projectId, limit = 50) {
     throw new TypeError("Invalid project ID.");
   }
 
+  return Number(projectId);
+}
+
+function validateAlertFilters({ page, limit, alertType }) {
+  if (!Number.isSafeInteger(page) || page < 1) {
+    throw new TypeError("Page must be a positive integer.");
+  }
+
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-    throw new TypeError("Alert limit must be between 1 and 100.");
+    throw new TypeError("Limit must be between 1 and 100.");
+  }
+
+  if (
+    alertType !== null &&
+    !ALLOWED_ALERT_TYPES.includes(alertType)
+  ) {
+    throw new TypeError("Invalid alert type.");
+  }
+}
+
+export async function getProjectAlerts(
+  projectId,
+  {
+    page = 1,
+    limit = 10,
+    alertType = null
+  } = {}
+) {
+  const validProjectId = validateProjectId(projectId);
+
+  validateAlertFilters({ page, limit, alertType });
+
+  const offset = (page - 1) * limit;
+
+  const values = [validProjectId];
+  let filter = "";
+
+  if (alertType !== null) {
+    values.push(alertType);
+    filter = `AND alert_type = $${values.length}`;
+  }
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total
+     FROM api_alerts
+     WHERE project_id = $1
+     ${filter}`,
+    values
+  );
+
+  const total = countResult.rows[0].total;
+
+  values.push(limit);
+  values.push(offset);
+
+  const alertsResult = await pool.query(
+    `SELECT
+       id,
+       project_id,
+       api_key_id,
+       alert_type,
+       usage_count,
+       rate_limit,
+       window_ms,
+       created_at
+     FROM api_alerts
+     WHERE project_id = $1
+     ${filter}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${values.length - 1}
+     OFFSET $${values.length}`,
+    values
+  );
+
+  const totalPages = Math.ceil(total / limit);
+
+  return {
+    alerts: alertsResult.rows,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1
+    }
+  };
+}
+
+export async function getProjectAlertById(projectId, alertId) {
+  const validProjectId = validateProjectId(projectId);
+
+  if (
+    !Number.isSafeInteger(Number(alertId)) ||
+    Number(alertId) < 1
+  ) {
+    throw new TypeError("Invalid alert ID.");
   }
 
   const result = await pool.query(
@@ -94,10 +189,10 @@ export async function getProjectAlerts(projectId, limit = 50) {
        created_at
      FROM api_alerts
      WHERE project_id = $1
-     ORDER BY created_at DESC, id DESC
-     LIMIT $2`,
-    [Number(projectId), limit]
+       AND id = $2
+     LIMIT 1`,
+    [validProjectId, Number(alertId)]
   );
 
-  return result.rows;
+  return result.rows[0] ?? null;
 }
