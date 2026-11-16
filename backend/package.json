@@ -19,6 +19,7 @@
     "dotenv": "^18.0.8",
     "express": "^5.3.0",
     "helmet": "^8.3.0",
+    "ipaddr.js": "^2.5.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.1",
     "redis": "^6.3.0",
@@ -28,5 +29,13 @@
   "devDependencies": {
     "nodemon": "^3.1.14",
     "supertest": "^7.3.1"
+  },
+  "overrides": {
+    "swagger-jsdoc": {
+      "glob": "^14.0.3"
+    },
+    "nodemon": {
+      "minimatch": "^11.0.8"
+    }
   }
 }
