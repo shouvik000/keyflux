@@ -18,6 +18,7 @@ import projectRoutes from "./routes/projectRoutes.js";
 import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./config/swagger.js";
 import alertRoutes from "./routes/alertRoutes.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
 
 const app = express();
 
@@ -56,6 +57,9 @@ app.use("/api/v1/analytics", analyticsRoutes);
 
 // API alerts management routes
 app.use("/api/v1/alerts", alertRoutes);
+
+// Webhook management routes
+app.use("/api/v1/webhooks", webhookRoutes);
 
 // Project management routes
 app.use("/api/v1/projects", projectRoutes);
