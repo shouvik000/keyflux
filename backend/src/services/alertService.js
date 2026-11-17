@@ -38,36 +38,97 @@ export async function createRateLimitAlert({
     throw new TypeError("Invalid rate-limit alert values.");
   }
 
-  const result = await pool.query(
-    `INSERT INTO api_alerts (
-       project_id,
-       api_key_id,
-       alert_type,
-       usage_count,
-       rate_limit,
-       window_ms
-     )
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING
-       id,
-       project_id,
-       api_key_id,
-       alert_type,
-       usage_count,
-       rate_limit,
-       window_ms,
-       created_at`,
-    [
-      Number(projectId),
-      Number(apiKeyId),
-      alertType,
-      Number(usageCount),
-      Number(rateLimit),
-      Number(windowMs)
-    ]
-  );
+  const client = await pool.connect();
 
-  return result.rows[0];
+  try {
+    await client.query("BEGIN");
+
+    // 1. Create the alert.
+    const result = await client.query(
+      `INSERT INTO api_alerts (
+         project_id,
+         api_key_id,
+         alert_type,
+         usage_count,
+         rate_limit,
+         window_ms
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING
+         id,
+         project_id,
+         api_key_id,
+         alert_type,
+         usage_count,
+         rate_limit,
+         window_ms,
+         created_at`,
+      [
+        Number(projectId),
+        Number(apiKeyId),
+        alertType,
+        Number(usageCount),
+        Number(rateLimit),
+        Number(windowMs)
+      ]
+    );
+
+    const alert = result.rows[0];
+
+    // 2. Find active webhooks subscribed to this alert.
+    const webhookResult = await client.query(
+      `SELECT id
+       FROM webhooks
+       WHERE project_id = $1
+         AND is_active = TRUE
+         AND $2 = ANY(events)`,
+      [Number(projectId), alertType]
+    );
+
+    // 3. Queue one delivery for each matching webhook.
+    if (webhookResult.rows.length > 0) {
+      const values = [];
+      const placeholders = [];
+
+      for (const webhook of webhookResult.rows) {
+        const offset = values.length;
+
+        values.push(webhook.id, alert.id);
+
+        placeholders.push(
+          `($${offset + 1}, $${offset + 2})`
+        );
+      }
+
+      await client.query(
+        `INSERT INTO webhook_deliveries (
+           webhook_id,
+           alert_id
+         )
+         VALUES ${placeholders.join(", ")}
+         ON CONFLICT (webhook_id, alert_id) DO NOTHING`,
+        values
+      );
+    }
+
+    // 4. Save the alert and queue records together.
+    await client.query("COMMIT");
+
+    return alert;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error(
+        "Failed to roll back alert transaction:",
+        rollbackError.message
+      );
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function validateProjectId(projectId) {
