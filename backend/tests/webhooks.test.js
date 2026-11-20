@@ -20,6 +20,7 @@ describe("Webhook Management API", () => {
     let secondProjectKey;
     let webhookId;
     let webhookSecret;
+    let deliveryId;
 
     before(async () => {
         await connectRedis();
@@ -284,6 +285,84 @@ describe("Webhook Management API", () => {
         assert.equal(response.status, 400);
     });
 
+    it("should list webhook delivery history with pagination", async () => {
+    const alertResult = await pool.query(
+        `
+        INSERT INTO api_alerts (
+            project_id,
+            alert_type,
+            usage_count,
+            rate_limit,
+            window_ms
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        `,
+        [
+            projectId,
+            "RATE_LIMIT_WARNING",
+            80,
+            100,
+            60000
+        ]
+    );
+
+    const alertId = alertResult.rows[0].id;
+
+    const deliveryResult = await pool.query(
+        `
+        INSERT INTO webhook_deliveries (
+            webhook_id,
+            alert_id,
+            status,
+            attempts,
+            response_status,
+            response_body
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+        `,
+        [
+            webhookId,
+            alertId,
+            "FAILED",
+            1,
+            500,
+            "Internal Server Error"
+        ]
+    );
+
+    deliveryId = deliveryResult.rows[0].id;
+
+    const response = await request(app)
+        .get(`/api/v1/webhooks/${webhookId}/deliveries?limit=10&offset=0`)
+        .set("x-api-key", managementKey);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.success, true);
+
+    const deliveries = response.body.data.deliveries;
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].id, deliveryId);
+    assert.equal(deliveries[0].status, "FAILED");
+    assert.equal(deliveries[0].attempts, 1);
+    assert.equal(deliveries[0].response_status, 500);
+    assert.equal(
+        deliveries[0].response_body,
+        "Internal Server Error"
+    );
+
+    assert.deepEqual(
+        response.body.data.pagination,
+        {
+            limit: 10,
+            offset: 0,
+            count: 1
+        }
+    );
+});
+
     it("should prevent access from another project", async () => {
         const response = await request(app)
             .get(`/api/v1/webhooks/${webhookId}`)
@@ -297,6 +376,42 @@ describe("Webhook Management API", () => {
         );
     });
 
+
+     it("should prevent another project from accessing webhook delivery history", async () => {
+    const response = await request(app)
+        .get(`/api/v1/webhooks/${webhookId}/deliveries`)
+        .set("x-api-key", secondProjectKey);
+
+    assert.equal(response.status, 404);
+
+    assert.equal(
+        response.body.error.code,
+        "WEBHOOK_NOT_FOUND"
+    );
+});
+
+
+it("should reject invalid delivery pagination parameters", async () => {
+    const invalidQueries = [
+        "?limit=0",
+        "?limit=101",
+        "?limit=abc",
+        "?offset=-1",
+        "?offset=abc"
+    ];
+
+    for (const query of invalidQueries) {
+        const response = await request(app)
+            .get(`/api/v1/webhooks/${webhookId}/deliveries${query}`)
+            .set("x-api-key", managementKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_PAGINATION"
+        );
+    }
+});
     it("should reject invalid webhook IDs", async () => {
         const response = await request(app)
             .get("/api/v1/webhooks/invalid")

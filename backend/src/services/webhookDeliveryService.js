@@ -190,3 +190,59 @@ export async function markWebhookDeliveryFailed({
 }
 
 export { MAX_ATTEMPTS, LOCK_TIMEOUT_SECONDS };
+/**
+ * List delivery history for a webhook belonging to a project.
+ */
+export async function listWebhookDeliveries({
+    projectId,
+    webhookId,
+    limit = 20,
+    offset = 0
+}) {
+    // Verify that the webhook belongs to this project.
+    const webhookResult = await pool.query(
+        `
+        SELECT id
+        FROM webhooks
+        WHERE id = $1
+            AND project_id = $2
+        `,
+        [webhookId, projectId]
+    );
+
+    if (webhookResult.rowCount === 0) {
+        return null;
+    }
+
+    // Retrieve delivery history.
+    const result = await pool.query(
+        `
+        SELECT
+            delivery.id,
+            delivery.webhook_id,
+            delivery.alert_id,
+            delivery.status,
+            delivery.attempts,
+            delivery.response_status,
+            delivery.response_body,
+            delivery.next_retry_at,
+            delivery.delivered_at,
+            delivery.created_at,
+            delivery.updated_at,
+            alert.alert_type
+        FROM webhook_deliveries AS delivery
+        INNER JOIN webhooks AS webhook
+            ON webhook.id = delivery.webhook_id
+        INNER JOIN api_alerts AS alert
+            ON alert.id = delivery.alert_id
+        WHERE webhook.id = $1
+            AND webhook.project_id = $2
+        ORDER BY delivery.created_at DESC, delivery.id DESC
+        LIMIT $3
+        OFFSET $4
+        `,
+        [webhookId, projectId, limit, offset]
+    );
+
+    return result.rows;
+}

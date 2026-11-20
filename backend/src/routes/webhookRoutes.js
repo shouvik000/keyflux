@@ -13,7 +13,41 @@ import {
     deleteProjectWebhook
 } from "../services/webhookService.js";
 
+import {
+    listWebhookDeliveries
+} from "../services/webhookDeliveryService.js";
+
+
+
 const router = Router();
+
+function validateDeliveryPagination(req, res, next) {
+    const limit = req.query.limit ?? "20";
+    const offset = req.query.offset ?? "0";
+
+    if (
+        !/^\d+$/.test(String(limit)) ||
+        !/^\d+$/.test(String(offset)) ||
+        Number(limit) < 1 ||
+        Number(limit) > 100 ||
+        !Number.isSafeInteger(Number(offset))
+    ) {
+        return res.status(400).json({
+            success: false,
+            error: {
+                code: "INVALID_PAGINATION",
+                message: "Limit must be between 1 and 100, and offset must be a non-negative integer."
+            }
+        });
+    }
+
+    req.deliveryPagination = {
+        limit: Number(limit),
+        offset: Number(offset)
+    };
+
+    next();
+}
 
 const ALLOWED_EVENTS = [
     "RATE_LIMIT_WARNING",
@@ -132,6 +166,46 @@ router.get("/", async (req, res, next) => {
         next(error);
     }
 });
+
+// List delivery history for a webhook.
+router.get(
+    "/:id/deliveries",
+    validateWebhookId,
+    validateDeliveryPagination,
+    async (req, res, next) => {
+        try {
+            const deliveries = await listWebhookDeliveries({
+                projectId: req.apiKey.projectId,
+                webhookId: req.webhookId,
+                limit: req.deliveryPagination.limit,
+                offset: req.deliveryPagination.offset
+            });
+
+             if (deliveries === null) {
+             return res.status(404).json({
+              success: false,
+            error: {
+            code: "WEBHOOK_NOT_FOUND",
+            message: "Webhook not found."
+        }
+    });
+}
+            res.status(200).json({
+                success: true,
+                data: {
+                    deliveries,
+                    pagination: {
+                        limit: req.deliveryPagination.limit,
+                        offset: req.deliveryPagination.offset,
+                        count: deliveries.length
+                    }
+                }
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
 
 // Get a single webhook.
 router.get("/:id", validateWebhookId, async (req, res, next) => {
