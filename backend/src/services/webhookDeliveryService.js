@@ -246,3 +246,79 @@ export async function listWebhookDeliveries({
 
     return result.rows;
 }
+/**
+ * Manually retry a failed webhook delivery.
+ *
+ * Only FAILED deliveries belonging to the authenticated project's
+ * webhook can be retried. Active worker leases are not bypassed.
+ */
+export async function retryWebhookDelivery({
+    projectId,
+    webhookId,
+    deliveryId
+}) {
+    const result = await pool.query(
+        `
+        UPDATE webhook_deliveries AS delivery
+        SET
+            status = 'PENDING',
+            next_retry_at = NULL,
+            response_status = NULL,
+            response_body = NULL,
+            delivered_at = NULL,
+            locked_at = NULL,
+            locked_by = NULL,
+            updated_at = NOW()
+        FROM webhooks AS webhook
+        WHERE delivery.id = $1
+            AND delivery.webhook_id = webhook.id
+            AND webhook.id = $2
+            AND webhook.project_id = $3
+            AND delivery.status = 'FAILED'
+            AND delivery.locked_at IS NULL
+            AND delivery.attempts < $4
+        RETURNING
+            delivery.id,
+            delivery.webhook_id,
+            delivery.status,
+            delivery.attempts,
+            delivery.next_retry_at,
+            delivery.updated_at
+        `,
+        [deliveryId, webhookId, projectId, MAX_ATTEMPTS]
+    );
+
+    if (result.rowCount === 1) {
+        return {
+            success: true,
+            delivery: result.rows[0]
+        };
+    }
+
+    // Distinguish a missing or unauthorized delivery from a non-retryable one.
+    const existingResult = await pool.query(
+        `
+        SELECT
+            delivery.id,
+            delivery.status,
+            delivery.attempts,
+            delivery.locked_at
+        FROM webhook_deliveries AS delivery
+        INNER JOIN webhooks AS webhook
+            ON webhook.id = delivery.webhook_id
+        WHERE delivery.id = $1
+            AND webhook.id = $2
+            AND webhook.project_id = $3
+        `,
+        [deliveryId, webhookId, projectId]
+    );
+
+    if (existingResult.rowCount === 0) {
+        return null;
+    }
+
+    return {
+        success: false,
+        delivery: existingResult.rows[0]
+    };
+}

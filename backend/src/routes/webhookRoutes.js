@@ -14,7 +14,8 @@ import {
 } from "../services/webhookService.js";
 
 import {
-    listWebhookDeliveries
+    listWebhookDeliveries,
+    retryWebhookDelivery
 } from "../services/webhookDeliveryService.js";
 
 
@@ -74,6 +75,27 @@ function validateWebhookId(req, res, next) {
     }
 
     req.webhookId = Number(id);
+    next();
+}
+
+function validateDeliveryId(req, res, next) {
+    const { deliveryId } = req.params;
+
+    if (
+        typeof deliveryId !== "string" ||
+        !/^[1-9]\d*$/.test(deliveryId) ||
+        !Number.isSafeInteger(Number(deliveryId))
+    ) {
+        return res.status(400).json({
+            success: false,
+            error: {
+                code: "INVALID_DELIVERY_ID",
+                message: "Delivery ID must be a positive integer."
+            }
+        });
+    }
+
+    req.deliveryId = Number(deliveryId);
     next();
 }
 
@@ -166,6 +188,52 @@ router.get("/", async (req, res, next) => {
         next(error);
     }
 });
+
+// Manually retry a failed webhook delivery.
+router.post(
+    "/:id/deliveries/:deliveryId/retry",
+    validateWebhookId,
+    validateDeliveryId,
+    async (req, res, next) => {
+        try {
+            const result = await retryWebhookDelivery({
+                projectId: req.apiKey.projectId,
+                webhookId: req.webhookId,
+                deliveryId: req.deliveryId
+            });
+
+            if (result === null) {
+                return res.status(404).json({
+                    success: false,
+                    error: {
+                        code: "WEBHOOK_NOT_FOUND",
+                        message: "Webhook or delivery not found."
+                    }
+                });
+            }
+
+            if (!result.success) {
+                return res.status(409).json({
+                    success: false,
+                    error: {
+                        code: "WEBHOOK_DELIVERY_NOT_RETRYABLE",
+                        message: "Only failed, unlocked deliveries below the maximum attempt count can be retried."
+                    }
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Webhook delivery queued for retry.",
+                data: {
+                    delivery: result.delivery
+                }
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
 
 // List delivery history for a webhook.
 router.get(

@@ -335,7 +335,7 @@ describe("Webhook Management API", () => {
     deliveryId = deliveryResult.rows[0].id;
 
     const response = await request(app)
-        .get(`/api/v1/webhooks/${webhookId}/deliveries?limit=10&offset=0`)
+    .get(`/api/v1/webhooks/${webhookId}/deliveries?limit=1&offset=0`)
         .set("x-api-key", managementKey);
 
     assert.equal(response.status, 200);
@@ -354,15 +354,134 @@ describe("Webhook Management API", () => {
     );
 
     assert.deepEqual(
-        response.body.data.pagination,
-        {
-            limit: 10,
-            offset: 0,
-            count: 1
-        }
-    );
+    response.body.data.pagination,
+    {
+        limit: 1,
+        offset: 0,
+        count: 1
+    }
+);
 });
 
+    it("should manually retry a failed webhook delivery", async () => {
+        const response = await request(app)
+            .post(`/api/v1/webhooks/${webhookId}/deliveries/${deliveryId}/retry`)
+            .set("x-api-key", managementKey);
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.success, true);
+
+        assert.equal(
+            response.body.data.delivery.status,
+            "PENDING"
+        );
+
+        assert.equal(
+            response.body.data.delivery.attempts,
+            1
+        );
+
+        const result = await pool.query(
+            `
+            SELECT status, attempts, response_status,
+                   response_body, delivered_at, locked_at, locked_by
+            FROM webhook_deliveries
+            WHERE id = $1
+            `,
+            [deliveryId]
+        );
+
+        assert.equal(result.rows[0].status, "PENDING");
+        assert.equal(result.rows[0].attempts, 1);
+        assert.equal(result.rows[0].response_status, null);
+        assert.equal(result.rows[0].response_body, null);
+        assert.equal(result.rows[0].delivered_at, null);
+        assert.equal(result.rows[0].locked_at, null);
+        assert.equal(result.rows[0].locked_by, null);
+    });
+
+    it("should reject retrying a delivery that is not FAILED", async () => {
+        const response = await request(app)
+            .post(`/api/v1/webhooks/${webhookId}/deliveries/${deliveryId}/retry`)
+            .set("x-api-key", managementKey);
+
+        assert.equal(response.status, 409);
+        assert.equal(
+            response.body.error.code,
+            "WEBHOOK_DELIVERY_NOT_RETRYABLE"
+        );
+    });
+
+    it("should prevent another project from retrying a delivery", async () => {
+        const response = await request(app)
+            .post(`/api/v1/webhooks/${webhookId}/deliveries/${deliveryId}/retry`)
+            .set("x-api-key", secondProjectKey);
+
+        assert.equal(response.status, 404);
+        assert.equal(
+            response.body.error.code,
+            "WEBHOOK_NOT_FOUND"
+        );
+    });
+
+    it("should reject an invalid delivery ID when retrying", async () => {
+        const response = await request(app)
+            .post(`/api/v1/webhooks/${webhookId}/deliveries/invalid/retry`)
+            .set("x-api-key", managementKey);
+
+        assert.equal(response.status, 400);
+        assert.equal(
+            response.body.error.code,
+            "INVALID_DELIVERY_ID"
+        );
+    });
+
+    it("should reject retrying a delivery with an active worker lock", async () => {
+        await pool.query(
+            `
+            UPDATE webhook_deliveries
+            SET status = 'FAILED',
+                locked_at = NOW(),
+                locked_by = 'test-worker'
+            WHERE id = $1
+            `,
+            [deliveryId]
+        );
+
+        const response = await request(app)
+            .post(`/api/v1/webhooks/${webhookId}/deliveries/${deliveryId}/retry`)
+            .set("x-api-key", managementKey);
+
+        assert.equal(response.status, 409);
+        assert.equal(
+            response.body.error.code,
+            "WEBHOOK_DELIVERY_NOT_RETRYABLE"
+        );
+    });
+
+    it("should reject retrying a delivery that reached the maximum attempts", async () => {
+        await pool.query(
+            `
+            UPDATE webhook_deliveries
+            SET status = 'FAILED',
+                attempts = 5,
+                locked_at = NULL,
+                locked_by = NULL
+            WHERE id = $1
+            `,
+            [deliveryId]
+        );
+
+        const response = await request(app)
+            .post(`/api/v1/webhooks/${webhookId}/deliveries/${deliveryId}/retry`)
+            .set("x-api-key", managementKey);
+
+        assert.equal(response.status, 409);
+        assert.equal(
+            response.body.error.code,
+            "WEBHOOK_DELIVERY_NOT_RETRYABLE"
+        );
+    });
     it("should prevent access from another project", async () => {
         const response = await request(app)
             .get(`/api/v1/webhooks/${webhookId}`)
