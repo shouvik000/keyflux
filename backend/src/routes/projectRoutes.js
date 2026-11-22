@@ -1,6 +1,6 @@
-
 import { Router } from "express";
 import { userAuth } from "../middleware/userAuth.js";
+
 import {
   createProject,
   listProjects,
@@ -8,6 +8,8 @@ import {
   updateProject,
   deleteProject
 } from "../services/projectService.js";
+
+import { createApiKey } from "../services/apiKeyService.js";
 
 const router = Router();
 
@@ -108,6 +110,115 @@ router.get("/", async (req, res, next) => {
     });
   } catch (error) {
     return next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/projects/{id}/keys:
+ *   post:
+ *     summary: Create the first API key for a project
+ *     description: Creates an API key using the authenticated project owner's JWT. Save the returned plaintext key immediately because it will not be shown again.
+ *     tags: [Projects]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: Project ID.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 maxLength: 100
+ *                 example: Initial API Key
+ *               expiresAt:
+ *                 type: string
+ *                 format: date-time
+ *                 nullable: true
+ *               rateLimitMax:
+ *                 type: integer
+ *                 minimum: 1
+ *                 default: 100
+ *               rateLimitWindowMs:
+ *                 type: integer
+ *                 minimum: 1
+ *                 default: 60000
+ *               scopes:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 default: ["*"]
+ *     responses:
+ *       201:
+ *         description: API key created successfully. Plaintext key is returned once.
+ *       400:
+ *         description: Invalid API key input.
+ *       401:
+ *         description: Missing or invalid JWT.
+ *       404:
+ *         description: Project not found or not owned by the authenticated user.
+ */
+router.post("/:id/keys", async (req, res, next) => {
+  try {
+    const project = await getProjectById(req.user.id, req.params.id);
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "PROJECT_NOT_FOUND",
+          message: "Project not found."
+        }
+      });
+    }
+
+    const {
+      name,
+      expiresAt = null,
+      rateLimitMax = 100,
+      rateLimitWindowMs = 60000,
+      scopes = ["*"]
+    } = req.body ?? {};
+
+    const result = await createApiKey({
+      projectId: project.id,
+      name,
+      expiresAt,
+      rateLimitMax,
+      rateLimitWindowMs,
+      scopes
+    });
+
+    return res.status(201).json({
+      success: true,
+      message:
+        "API key created successfully. Save the key now; it will not be shown again.",
+      data: result
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_API_KEY_INPUT",
+          message: error.message
+        }
+      });
+    }
+
+    return handleError(error, res, next);
   }
 });
 
