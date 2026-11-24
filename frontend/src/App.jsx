@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import AuthPage from "./pages/AuthPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
+import AlertsPage from "./pages/AlertsPage";
 import api from "./services/api";
 
 export default function App() {
@@ -57,6 +58,11 @@ export default function App() {
     setActivePage("analytics");
   }
 
+  function handleOpenAlerts(project) {
+    setActiveProject(project);
+    setActivePage("alerts");
+  }
+
   function handleBackToProjects() {
     setActiveProject(null);
     setActivePage("projects");
@@ -90,11 +96,23 @@ export default function App() {
     );
   }
 
+  if (activePage === "alerts" && activeProject) {
+    return (
+      <AlertsPage
+        project={activeProject}
+        user={user}
+        onBack={handleBackToProjects}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   return (
     <ProjectsPage
       user={user}
       onLogout={handleLogout}
       onOpenAnalytics={handleOpenAnalytics}
+      onOpenAlerts={handleOpenAlerts}
     />
   );
 }

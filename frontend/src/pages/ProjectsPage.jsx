@@ -10,12 +10,13 @@ import {
   RefreshCw,
   KeyRound,
   BarChart3,
+  Bell,
   Copy,
   Check
 } from "lucide-react";
 import api from "../services/api";
 
-export default function ProjectsPage({ user, onLogout, onOpenAnalytics }) {
+export default function ProjectsPage({ user, onLogout, onOpenAnalytics, onOpenAlerts }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -380,7 +381,7 @@ export default function ProjectsPage({ user, onLogout, onOpenAnalytics }) {
                     Created {formatDate(project.created_at)}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-2 gap-2">
+                  <div className="mt-4 grid grid-cols-3 gap-2">
                     <button
                       onClick={() => openKeyForm(project)}
                       className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:bg-slate-50"
@@ -395,6 +396,14 @@ export default function ProjectsPage({ user, onLogout, onOpenAnalytics }) {
                     >
                       <BarChart3 size={16} />
                       Analytics
+                    </button>
+
+                    <button
+                      onClick={() => onOpenAlerts(project)}
+                      className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:bg-slate-50"
+                    >
+                      <Bell size={16} />
+                      Alerts
                     </button>
                   </div>
                 </article>
