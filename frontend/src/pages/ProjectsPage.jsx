@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FolderKanban,
   Plus,
@@ -9,12 +9,13 @@ import {
   FolderOpen,
   RefreshCw,
   KeyRound,
+  BarChart3,
   Copy,
   Check
 } from "lucide-react";
 import api from "../services/api";
 
-export default function ProjectsPage({ user, onLogout }) {
+export default function ProjectsPage({ user, onLogout, onOpenAnalytics }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -379,13 +380,23 @@ export default function ProjectsPage({ user, onLogout }) {
                     Created {formatDate(project.created_at)}
                   </div>
 
-                  <button
-                    onClick={() => openKeyForm(project)}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:bg-slate-50"
-                  >
-                    <KeyRound size={16} />
-                    Generate API Key
-                  </button>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => openKeyForm(project)}
+                      className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:bg-slate-50"
+                    >
+                      <KeyRound size={16} />
+                      Generate Key
+                    </button>
+
+                    <button
+                      onClick={() => onOpenAnalytics(project)}
+                      className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"
+                    >
+                      <BarChart3 size={16} />
+                      Analytics
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>

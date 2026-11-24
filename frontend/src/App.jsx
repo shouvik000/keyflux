@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import AuthPage from "./pages/AuthPage";
 import ProjectsPage from "./pages/ProjectsPage";
+import AnalyticsPage from "./pages/AnalyticsPage";
 import api from "./services/api";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [activeProject, setActiveProject] = useState(null);
+  const [activePage, setActivePage] = useState("projects");
 
   useEffect(() => {
     let active = true;
@@ -45,6 +48,18 @@ export default function App() {
   function handleLogout() {
     localStorage.removeItem("keyflux_token");
     setUser(null);
+    setActiveProject(null);
+    setActivePage("projects");
+  }
+
+  function handleOpenAnalytics(project) {
+    setActiveProject(project);
+    setActivePage("analytics");
+  }
+
+  function handleBackToProjects() {
+    setActiveProject(null);
+    setActivePage("projects");
   }
 
   if (checkingSession) {
@@ -64,10 +79,22 @@ export default function App() {
     return <AuthPage onLogin={setUser} />;
   }
 
+  if (activePage === "analytics" && activeProject) {
+    return (
+      <AnalyticsPage
+        project={activeProject}
+        user={user}
+        onBack={handleBackToProjects}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   return (
     <ProjectsPage
       user={user}
       onLogout={handleLogout}
+      onOpenAnalytics={handleOpenAnalytics}
     />
   );
 }
