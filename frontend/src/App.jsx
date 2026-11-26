@@ -1,8 +1,10 @@
-﻿import { useEffect, useState } from "react";
+﻿
+import { useEffect, useState } from "react";
 import AuthPage from "./pages/AuthPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import AlertsPage from "./pages/AlertsPage";
+import WebhooksPage from "./pages/WebhooksPage";
 import api from "./services/api";
 
 export default function App() {
@@ -63,6 +65,11 @@ export default function App() {
     setActivePage("alerts");
   }
 
+  function handleOpenWebhooks(project) {
+    setActiveProject(project);
+    setActivePage("webhooks");
+  }
+
   function handleBackToProjects() {
     setActiveProject(null);
     setActivePage("projects");
@@ -107,12 +114,25 @@ export default function App() {
     );
   }
 
+  if (activePage === "webhooks" && activeProject) {
+    return (
+      <WebhooksPage
+        project={activeProject}
+        user={user}
+        onBack={handleBackToProjects}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   return (
     <ProjectsPage
       user={user}
       onLogout={handleLogout}
       onOpenAnalytics={handleOpenAnalytics}
       onOpenAlerts={handleOpenAlerts}
+      onOpenWebhooks={handleOpenWebhooks}
     />
   );
 }
+

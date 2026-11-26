@@ -1,3 +1,4 @@
+
 {
   "name": "backend",
   "version": "1.0.0",
@@ -5,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon src/server.js",
+    "dev:all": "concurrently -k -n API,WEBHOOK -c blue,green \"npm:dev\" \"npm:worker:webhooks\"",
     "start": "node src/server.js",
     "db:migrate": "node src/db/migrate.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js",
@@ -28,6 +30,7 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "concurrently": "^10.0.7",
     "nodemon": "^3.1.14",
     "supertest": "^7.3.1"
   },
@@ -40,3 +43,4 @@
     }
   }
 }
+

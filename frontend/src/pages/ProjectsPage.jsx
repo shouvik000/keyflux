@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
   FolderKanban,
   Plus,
@@ -11,12 +11,13 @@ import {
   KeyRound,
   BarChart3,
   Bell,
+  Webhook,
   Copy,
   Check
 } from "lucide-react";
 import api from "../services/api";
 
-export default function ProjectsPage({ user, onLogout, onOpenAnalytics, onOpenAlerts }) {
+export default function ProjectsPage({ user, onLogout, onOpenAnalytics, onOpenAlerts, onOpenWebhooks }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -381,7 +382,7 @@ export default function ProjectsPage({ user, onLogout, onOpenAnalytics, onOpenAl
                     Created {formatDate(project.created_at)}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <button
                       onClick={() => openKeyForm(project)}
                       className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:bg-slate-50"
@@ -405,7 +406,14 @@ export default function ProjectsPage({ user, onLogout, onOpenAnalytics, onOpenAl
                       <Bell size={16} />
                       Alerts
                     </button>
-                  </div>
+
+                    <button
+                      onClick={() => onOpenWebhooks(project)}
+                      className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:bg-slate-50"
+                    >
+                      <Webhook size={16} />
+                      Webhooks
+                    </button>                  </div>
                 </article>
               ))}
             </div>
@@ -642,3 +650,4 @@ export default function ProjectsPage({ user, onLogout, onOpenAnalytics, onOpenAl
     </main>
   );
 }
+
